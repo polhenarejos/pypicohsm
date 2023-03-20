@@ -20,12 +20,12 @@
 import sys
 import os
 from enum import Enum
-from APDU import APDUResponse
-from DO import DOPrefixes
-from Algorithm import Algorithm, Padding
-from utils import int_to_bytes
-from const import DEFAULT_PIN, DEFAULT_SOPIN, DEFAULT_RETRIES, EF_TERMCA, DEFAULT_DKEK_SHARES
-from oid import OID
+from .APDU import APDUResponse
+from .DO import DOPrefixes
+from .Algorithm import Algorithm, Padding
+from .utils import int_to_bytes
+from .const import DEFAULT_PIN, DEFAULT_SOPIN, DEFAULT_RETRIES, EF_TERMCA, DEFAULT_DKEK_SHARES
+from .oid import OID
 import hashlib
 
 try:
@@ -64,7 +64,7 @@ class PicoHSM:
         def __init__(self, name):
             self.name = name
 
-    def __init__(self,pin='648219'):
+    def __init__(self, pin='648219'):
         self.__pin = pin
         cardtype = AnyCardType()
         try:
@@ -478,7 +478,7 @@ class PicoHSM:
         return self.send(cla=0x80, command=0x84, ne=length)
 
     def cipher(self, algo, keyid, data):
-        resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=algo.value, data=data)
+        resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=algo, data=data)
         return resp
 
     def hmac(self, hash, keyid, data):
@@ -499,7 +499,7 @@ class PicoHSM:
         return resp
 
     def cmac(self, keyid, data):
-        resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=Algorithm.ALGO_AES_CMAC.value, data=data)
+        resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=Algorithm.ALGO_AES_CMAC, data=data)
         return resp
 
     def hkdf(self, hash, keyid, data, salt, out_len=None):
@@ -631,11 +631,11 @@ class PicoHSM:
         return status[2:10], status[10:]
 
     def generate_xkek_key(self, key_domain=0):
-        key_id = self.key_generation(KeyType.ECC, 'brainpoolP256r1', algorithms=[Algorithm.ALGO_EC_ECDH_XKEK.value], key_domain=key_domain)
+        key_id = self.key_generation(KeyType.ECC, 'brainpoolP256r1', algorithms=[Algorithm.ALGO_EC_ECDH_XKEK], key_domain=key_domain)
         return key_id
 
     def derive_xkek(self, keyid, cert):
-        self.send(cla=0x80, command=0x62, p1=keyid, p2=Algorithm.ALGO_EC_ECDH_XKEK.value, data=cert)
+        self.send(cla=0x80, command=0x62, p1=keyid, p2=Algorithm.ALGO_EC_ECDH_XKEK, data=cert)
 
     def delete_xkek(self, key_domain=0):
         self.send(cla=0x80, command=0x52, p1=0x04, p2=key_domain)
