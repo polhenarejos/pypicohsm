@@ -34,6 +34,7 @@ class SWCodes:
     SW_SECURE_MESSAGE_EXEC_ERROR        = 0x6600
 
     SW_WRONG_LENGTH                     = 0x6700
+    SW_WRONG_DATA                       = 0x6700
 
     SW_LOGICAL_CHANNEL_NOT_SUPPORTED    = 0x6881
     SW_SECURE_MESSAGING_NOT_SUPPORTED   = 0x6882
