@@ -19,7 +19,6 @@
 
 import sys
 import os
-from enum import Enum
 from .APDU import APDUResponse
 from .DO import DOPrefixes
 from .Algorithm import Algorithm, Padding
@@ -54,10 +53,14 @@ except ModuleNotFoundError:
     print('ERROR: cryptography module not found! Install cryptography package.\nTry with `pip install cryptography`')
     sys.exit(-1)
 
-class KeyType(Enum):
+class KeyType:
     RSA                     = 1
     ECC                     = 2
     AES                     = 3
+
+class EncryptionMode:
+    ENCRYPT     = 1
+    DECRYPT     = 2
 
 class PicoHSM:
     class EcDummy:
@@ -639,3 +642,13 @@ class PicoHSM:
 
     def delete_xkek(self, key_domain=0):
         self.send(cla=0x80, command=0x52, p1=0x04, p2=key_domain)
+
+    def chachapoly(self, keyid, mode, data, iv=None, aad=None):
+        oid = OID.CHACHAPOLY
+        data = [0x06, len(oid)] + list(oid) + [0x81, len(data)] + list(data)
+        if (iv is not None):
+            data += [0x82, len(iv)] + list(iv)
+        if (aad is not None):
+            data += [0x83, len(aad)] + list(aad)
+        resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=Algorithm.ALGO_EXT_CIPHER_ENCRYPT if mode == EncryptionMode.ENCRYPT else Algorithm.ALGO_EXT_CIPHER_DECRYPT, data=data)
+        return resp
