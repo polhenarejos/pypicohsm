@@ -130,8 +130,8 @@ class PicoHSM:
             if (code not in codes):
                 raise APDUResponse(sw1, sw2)
         if (len(codes) > 1):
-            return response, code
-        return response
+            return bytes(response), code
+        return bytes(response)
 
     def get_login_retries(self):
         self.select_applet()
@@ -242,6 +242,8 @@ class PicoHSM:
                 p2 = 0xB1
             elif (param == 256):
                 p2 = 0xB2
+            elif (param == 512):
+                p2 = 0xB3
             else:
                 raise ValueError('Bad AES key size')
             keyid = self.get_first_free_id()
@@ -261,7 +263,7 @@ class PicoHSM:
             resp = self.send(command=0xB1, p1=p1, p2=p2, data=[0x54, 0x02, 0x00, 0x00])
         else:
             resp = self.get_contents(p1=p1 >> 8, p2=p1 & 0xff)
-        return bytes(resp)
+        return resp
 
     def put_contents(self, p1, p2=None, data=None):
         if (p2):
@@ -334,7 +336,7 @@ class PicoHSM:
         else:
             p2 = Padding.RAW
         resp = self.send(command=0x62, p1=keyid, p2=p2, data=list(data))
-        return bytes(resp)
+        return resp
 
     def import_dkek(self, dkek, key_domain=0):
         resp = self.send(cla=0x80, command=0x52, p1=0x0, p2=key_domain, data=dkek)
@@ -478,7 +480,8 @@ class PicoHSM:
         self.send(cla=0x80, command=0x52, p1=0x3, p2=key_domain, codes=[0x6A88])
 
     def get_challenge(self, length):
-        return self.send(cla=0x80, command=0x84, ne=length)
+        resp = self.send(cla=0x80, command=0x84, ne=length)
+        return resp
 
     def cipher(self, algo, keyid, data):
         resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=algo, data=data)
