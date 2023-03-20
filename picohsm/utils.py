@@ -17,7 +17,5 @@
  */
 """
 
-from enum import Enum
-
 def int_to_bytes(x, length=None, byteorder='big'):
     return x.to_bytes(length or (x.bit_length() + 7) // 8, byteorder=byteorder)

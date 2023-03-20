@@ -17,9 +17,7 @@
  */
 """
 
-from enum import Enum
-
-class SWCodes(Enum):
+class SWCodes:
     SW_BYTES_REMAINING_00               = 0x6100
     SW_WARNING_STATE_UNCHANGED          = 0x6200
     SW_WARNING_CORRUPTED                = 0x6281

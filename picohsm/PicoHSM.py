@@ -24,7 +24,8 @@ from APDU import APDUResponse
 from DO import DOPrefixes
 from Algorithm import Algorithm, Padding
 from utils import int_to_bytes
-from const import DEFAULT_PIN, DEFAULT_SOPIN, DEFAULT_RETRIES
+from const import DEFAULT_PIN, DEFAULT_SOPIN, DEFAULT_RETRIES, EF_TERMCA, DEFAULT_DKEK_SHARES
+from oid import OID
 import hashlib
 
 try:
@@ -200,7 +201,7 @@ class PicoHSM:
     def list_keys(self, prefix=None):
         resp = self.send(command=0x58)
         if (prefix is not None):
-            grouped = [(resp[i],resp[i+1]) for i in range(0, len(resp), 2) if resp[i] == prefix.value]
+            grouped = [(resp[i],resp[i+1]) for i in range(0, len(resp), 2) if resp[i] == prefix]
             _, kids = zip(*grouped)
             return kids
         return [(resp[i],resp[i+1]) for i in range(0, len(resp), 2)]
@@ -266,7 +267,7 @@ class PicoHSM:
             self.put_contents(p1=p1 >> 8, p2=p1 & 0xff, data=data)
 
     def public_key(self, keyid, param=None):
-        response = self.get_contents(p1=DOPrefixes.EE_CERTIFICATE_PREFIX.value, p2=keyid)
+        response = self.get_contents(p1=DOPrefixes.EE_CERTIFICATE_PREFIX, p2=keyid)
 
         cert = bytearray(response)
         roid = CVC().decode(cert).pubkey().oid()
@@ -284,11 +285,11 @@ class PicoHSM:
         return None
 
     def sign(self, keyid, scheme, data):
-        resp = self.send(cla=0x80, command=0x68, p1=keyid, p2=scheme.value, data=data)
+        resp = self.send(cla=0x80, command=0x68, p1=keyid, p2=scheme, data=data)
         return resp
 
     def verify(self, pubkey, data, signature, scheme):
-        if (Algorithm.ALGO_EC_RAW.value <= scheme.value <= Algorithm.ALGO_EC_SHA512.value):
+        if (Algorithm.ALGO_EC_RAW <= scheme <= Algorithm.ALGO_EC_SHA512):
             if (scheme == Algorithm.ALGO_EC_SHA1):
                 hsh = hashes.SHA1()
             elif (scheme == Algorithm.ALGO_EC_SHA224):
@@ -302,7 +303,7 @@ class PicoHSM:
             elif (scheme == Algorithm.ALGO_EC_SHA512):
                 hsh = hashes.SHA512()
             return pubkey.verify(signature, data, ec.ECDSA(hsh))
-        elif (Algorithm.ALGO_RSA_PKCS1_SHA1.value <= scheme.value <= Algorithm.ALGO_RSA_PSS_SHA512.value):
+        elif (Algorithm.ALGO_RSA_PKCS1_SHA1 <= scheme <= Algorithm.ALGO_RSA_PSS_SHA512):
             if (scheme == Algorithm.ALGO_RSA_PKCS1_SHA1 or scheme == Algorithm.ALGO_RSA_PSS_SHA1):
                 hsh = hashes.SHA1()
             elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA224 or scheme == Algorithm.ALGO_RSA_PSS_SHA224):
@@ -313,9 +314,9 @@ class PicoHSM:
                 hsh = hashes.SHA384()
             elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA512 or scheme == Algorithm.ALGO_RSA_PSS_SHA512):
                 hsh = hashes.SHA512()
-            if (Algorithm.ALGO_RSA_PKCS1_SHA1.value <= scheme.value <= Algorithm.ALGO_RSA_PKCS1_SHA512.value):
+            if (Algorithm.ALGO_RSA_PKCS1_SHA1 <= scheme <= Algorithm.ALGO_RSA_PKCS1_SHA512):
                 padd = padding.PKCS1v15()
-            elif (Algorithm.ALGO_RSA_PSS_SHA1.value <= scheme.value <= Algorithm.ALGO_RSA_PSS_SHA512.value):
+            elif (Algorithm.ALGO_RSA_PSS_SHA1 <= scheme <= Algorithm.ALGO_RSA_PSS_SHA512):
                 padd = padding.PSS(
                     mgf=padding.MGF1(hsh),
                     salt_length=padding.PSS.AUTO
@@ -324,11 +325,11 @@ class PicoHSM:
 
     def decrypt(self, keyid, data, pad):
         if (isinstance(pad, padding.OAEP)):
-            p2 = Padding.OAEP.value
+            p2 = Padding.OAEP
         elif (isinstance(pad, padding.PKCS1v15)):
-            p2 = Padding.PKCS.value
+            p2 = Padding.PKCS
         else:
-            p2 = Padding.RAW.value
+            p2 = Padding.RAW
         resp = self.send(command=0x62, p1=keyid, p2=p2, data=list(data))
         return bytes(resp)
 
@@ -344,17 +345,17 @@ class PicoHSM:
         data += kcv
         if (isinstance(pkey, rsa.RSAPrivateKey)):
             data += b'\x05'
-            algo = b'\x00\x0A\x04\x00\x7F\x00\x07\x02\x02\x02\x01\x02'
+            algo = OID.RSA
         elif (isinstance(pkey, ec.EllipticCurvePrivateKey)):
             data += b'\x0C'
-            algo = b'\x00\x0A\x04\x00\x7F\x00\x07\x02\x02\x02\x02\x03'
+            algo = OID.EC
         elif (isinstance(pkey, bytes)):
             data += b'\x0F'
-            algo = b'\x00\x08\x60\x86\x48\x01\x65\x03\x04\x01'
+            algo = OID.AES
 
         data += algo
         if (not purposes and isinstance(pkey, bytes)):
-            purposes = [Algorithm.ALGO_AES_CBC_ENCRYPT.value, Algorithm.ALGO_AES_CBC_DECRYPT.value, Algorithm.ALGO_AES_CMAC.value, Algorithm.ALGO_AES_DERIVE.value, Algorithm.ALGO_EXT_CIPHER_ENCRYPT.value, Algorithm.ALGO_EXT_CIPHER_DECRYPT.value]
+            purposes = [Algorithm.ALGO_AES_CBC_ENCRYPT, Algorithm.ALGO_AES_CBC_DECRYPT, Algorithm.ALGO_AES_CMAC, Algorithm.ALGO_AES_DERIVE, Algorithm.ALGO_EXT_CIPHER_ENCRYPT, Algorithm.ALGO_EXT_CIPHER_DECRYPT]
         if (purposes):
             data += b'\x00' + bytes([len(purposes)]) + bytes(purposes) + b'\x00'*4
         else:
@@ -416,7 +417,7 @@ class PicoHSM:
         return resp
 
     def exchange(self, keyid, pubkey):
-        resp = self.send(cla=0x80, command=0x62, p1=keyid, p2=Algorithm.ALGO_EC_ECDH.value, data=pubkey.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint))
+        resp = self.send(cla=0x80, command=0x62, p1=keyid, p2=Algorithm.ALGO_EC_ECDH, data=pubkey.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint))
         return resp[1:]
 
     def parse_cvc(self, data):
@@ -482,15 +483,15 @@ class PicoHSM:
 
     def hmac(self, hash, keyid, data):
         if (hash == hashes.SHA1):
-            algo = b'\x2A\x86\x48\x86\xF7\x0D\x02\x07'
+            algo = OID.SHA1
         elif (hash == hashes.SHA224):
-            algo = b'\x2A\x86\x48\x86\xF7\x0D\x02\x08'
+            algo = OID.SHA224
         elif (hash == hashes.SHA256):
-            algo = b'\x2A\x86\x48\x86\xF7\x0D\x02\x09'
+            algo = OID.SHA256
         elif (hash == hashes.SHA384):
-            algo = b'\x2A\x86\x48\x86\xF7\x0D\x02\x0A'
+            algo = OID.SHA384
         elif (hash == hashes.SHA512):
-            algo = b'\x2A\x86\x48\x86\xF7\x0D\x02\x0B'
+            algo = OID.SHA512
         else:
             raise ValueError("Hash not supported")
         data = [0x06, len(algo)] + list(algo) + [0x81, len(data)] + list(data)
@@ -503,48 +504,47 @@ class PicoHSM:
 
     def hkdf(self, hash, keyid, data, salt, out_len=None):
         if (hash == hashes.SHA256):
-            algo = b'\x2A\x86\x48\x86\xF7\x0D\x01\x09\x10\x03\x1D'
+            algo = OID.HKDF_SHA256
         elif (hash == hashes.SHA384):
-            algo = b'\x2A\x86\x48\x86\xF7\x0D\x01\x09\x10\x03\x1E'
+            algo = OID.HKDF_SHA384
         elif (hash == hashes.SHA512):
-            algo = b'\x2A\x86\x48\x86\xF7\x0D\x01\x09\x10\x03\x1F'
+            algo = OID.HKDF_SHA512
         data = [0x06, len(algo)] + list(algo) + [0x81, len(data)] + list(data) + [0x82, len(salt)] + list(salt)
         resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=0x51, data=data, ne=out_len)
         return resp
 
     def pbkdf2(self, hash, keyid, salt, iterations, out_len=None):
-        oid = b'\x2A\x86\x48\x86\xF7\x0D\x01\x05\x0C'
+        oid = OID.PBKDF2
         salt = b'\x04' + bytes([len(salt)]) + salt
         iteration = b'\x02' + bytes([len(int_to_bytes(iterations))]) + int_to_bytes(iterations)
-        prf = b'\x30\x0A\x06\x08\x2A\x86\x48\x86\xF7\x0D\x02'
+        prf = b'\x30\x0A\x06\x08'
         if (hash == hashes.SHA1):
-            prf += b'\x07'
+            prf += OID.SHA1
         elif (hash == hashes.SHA224):
-            prf += b'\x08'
+            prf += OID.SHA224
         elif (hash == hashes.SHA256):
-            prf += b'\x09'
+            prf += OID.SHA256
         elif (hash == hashes.SHA384):
-            prf += b'\x0A'
+            prf += OID.SHA384
         elif (hash == hashes.SHA512):
-            prf += b'\x0B'
+            prf += OID.SHA512
         data = list(salt + iteration + prf)
         data = [0x06, len(oid)] + list(oid) + [0x81, len(data)] + list(data)
         resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=0x51, data=data, ne=out_len)
         return resp
 
     def x963(self, hash, keyid, data, out_len=None):
-        oid =  b'\x2B\x81\x05\x10\x86\x48\x3F'
-        enc = b'\x2A\x86\x48\x86\xF7\x0D\x02'
+        oid = OID.KDF_X963
         if (hash == hashes.SHA1):
-            enc += b'\x07'
+            enc = OID.SHA1
         elif (hash == hashes.SHA224):
-            enc += b'\x08'
+            enc = OID.SHA224
         elif (hash == hashes.SHA256):
-            enc += b'\x09'
+            enc = OID.SHA256
         elif (hash == hashes.SHA384):
-            enc += b'\x0A'
+            enc = OID.SHA384
         elif (hash == hashes.SHA512):
-            enc += b'\x0B'
+            enc = OID.SHA512
         else:
             raise ValueError("Hash not supported")
         data = [0x06, len(oid)] + list(oid) + [0x81, len(enc)] + list(enc) + [0x83, len(data)] + list(data)

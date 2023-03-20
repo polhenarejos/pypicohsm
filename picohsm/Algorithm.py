@@ -17,9 +17,7 @@
  */
 """
 
-from enum import Enum
-
-class Algorithm(Enum):
+class Algorithm:
     ALGO_AES_CBC_ENCRYPT    = 0x10
     ALGO_AES_CBC_DECRYPT    = 0x11
     ALGO_AES_CMAC           = 0x18
@@ -54,7 +52,7 @@ class Algorithm(Enum):
     ALGO_RSA_PSS_SHA384     = 0x44
     ALGO_RSA_PSS_SHA512     = 0x45
 
-class Padding(Enum):
+class Padding:
     RAW =       0x21
     PKCS =      0x22
-    OAEP =       0x23
+    OAEP =      0x23

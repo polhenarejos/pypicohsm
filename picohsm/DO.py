@@ -17,9 +17,7 @@
  */
 """
 
-from enum import Enum
-
-class DOPrefixes(Enum):
+class DOPrefixes:
     PRKD_PREFIX             = 0xC4
     CD_PREFIX               = 0xC8
     DCOD_PREFIX             = 0xC9
