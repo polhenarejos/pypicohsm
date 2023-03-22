@@ -732,3 +732,12 @@ class PicoHSM:
             data += [0x83, len(aad)] + list(aad)
         resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=Algorithm.ALGO_EXT_CIPHER_ENCRYPT if mode == EncryptionMode.ENCRYPT else Algorithm.ALGO_EXT_CIPHER_DECRYPT, data=data)
         return resp
+
+    def delete_key(self, keyid):
+        try:
+            self.delete_file(DOPrefixes.KEY_PREFIX, keyid)
+            self.delete_file(DOPrefixes.PRKD_PREFIX, keyid)
+            self.delete_file(DOPrefixes.EE_CERTIFICATE_PREFIX, keyid)
+        except APDUResponse:
+            pass
+
