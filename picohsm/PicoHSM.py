@@ -82,7 +82,7 @@ class PicoHSM:
             raise Exception('time-out: no card inserted during last 10s')
         self.select_applet()
         data = self.get_contents(p1=0x2f02)
-        self.device_id = CVC().decode(data).chr()
+        self.device_id = CVC().decode(data).chr() if data else None
 
     def select_applet(self):
         self.__card.connection.transmit([0x00, 0xA4, 0x04, 0x00, 0xB, 0xE8, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x81, 0xC3, 0x1F, 0x02, 0x01, 0x0])
@@ -432,15 +432,17 @@ class PicoHSM:
 
     def get_termca(self):
         resp = self.get_contents(EF_TERMCA)
-        cv_data = self.parse_cvc(resp)
-        a = ASN1().decode(resp).find(0x7f21).data()
-        tlen = len(ASN1.calculate_len(len(a)))
-        ret = {'cv': cv_data}
-        if (len(a)+2+tlen < len(resp)): # There's more certificate
-            resp = resp[2+len(a)+tlen:]
-            dv_data = self.parse_cvc(resp)
-            ret['dv'] = dv_data
-        return ret
+        if (resp):
+            cv_data = self.parse_cvc(resp)
+            a = ASN1().decode(resp).find(0x7f21).data()
+            tlen = len(ASN1.calculate_len(len(a)))
+            ret = {'cv': cv_data}
+            if (len(a)+2+tlen < len(resp)): # There's more certificate
+                resp = resp[2+len(a)+tlen:]
+                dv_data = self.parse_cvc(resp)
+                ret['dv'] = dv_data
+            return ret
+        return None
 
     def get_version(self):
         resp = self.send(cla=0x80, command=0x50)
@@ -654,4 +656,27 @@ class PicoHSM:
         if (aad is not None):
             data += [0x83, len(aad)] + list(aad)
         resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=Algorithm.ALGO_EXT_CIPHER_ENCRYPT if mode == EncryptionMode.ENCRYPT else Algorithm.ALGO_EXT_CIPHER_DECRYPT, data=data)
+        return resp
+
+    def keyinfo(self, keyid):
+        resp = self.get_contents(DOPrefixes.PRKD_PREFIX, keyid)
+        ret = {}
+        if (resp):
+            key_size = b''
+            if (resp[0] == 0x30):
+                ret['type'] = KeyType.RSA
+                key_size = ASN1().decode(resp).find(0x30).find(0xA1).find(0x30).find(0x2).data()
+            elif (resp[0] == 0xA0):
+                ret['type'] = KeyType.ECC
+                key_size = ASN1().decode(resp).find(0xA0).find(0xA1).find(0x30).find(0x2).data()
+            elif (resp[0] == 0xA8):
+                ret['type'] = KeyType.AES
+                key_size = ASN1().decode(resp).find(0xA8).find(0xA0).find(0x30).find(0x2).data()
+            ret['key_size'] = int.from_bytes(key_size, 'big')
+            ret['label'] = bytes(ASN1().decode(resp).find(resp[0]).find(0x30).find(0xC).data()).decode()
+            ret['key_id'] = bytes(ASN1().decode(resp).find(resp[0]).find(0x30, pos=1).find(0x4).data())
+        return ret
+
+    def aes(self, keyid, mode, algorithm, data, iv=None, aad=None):
+        resp = self.keyinfo(keyid)
         return resp
