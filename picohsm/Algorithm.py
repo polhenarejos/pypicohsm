@@ -53,6 +53,14 @@ class Algorithm:
     ALGO_RSA_PSS_SHA512     = 0x45
 
 class Padding:
-    RAW =       0x21
-    PKCS =      0x22
-    OAEP =      0x23
+    RAW         = 0x21
+    PKCS        = 0x22
+    OAEP        = 0x23
+
+class AES:
+    ECB         = 1
+    CBC         = 2
+    OFB         = 3
+    CFB         = 4
+    GCM         = 5
+    XTS         = 6

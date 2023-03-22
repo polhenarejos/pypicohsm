@@ -21,7 +21,7 @@ import sys
 import os
 from .APDU import APDUResponse
 from .DO import DOPrefixes
-from .Algorithm import Algorithm, Padding
+from .Algorithm import Algorithm, Padding, AES
 from .utils import int_to_bytes
 from .const import DEFAULT_PIN, DEFAULT_SOPIN, DEFAULT_RETRIES, EF_TERMCA, DEFAULT_DKEK_SHARES
 from .oid import OID
@@ -679,4 +679,56 @@ class PicoHSM:
 
     def aes(self, keyid, mode, algorithm, data, iv=None, aad=None):
         resp = self.keyinfo(keyid)
+        if ('key_size' not in resp):
+            raise ValueError('Key info not found')
+        key_size = resp['key_size']
+        oid = None
+        if (algorithm == AES.ECB):
+            if (key_size == 128):
+                oid = OID.AES128_ECB
+            elif (key_size == 192):
+                oid = OID.AES192_ECB
+            elif (key_size == 256):
+                oid = OID.AES256_ECB
+        elif (algorithm == AES.CBC):
+            if (key_size == 128):
+                oid = OID.AES128_CBC
+            elif (key_size == 192):
+                oid = OID.AES192_CBC
+            elif (key_size == 256):
+                oid = OID.AES256_CBC
+        elif (algorithm == AES.OFB):
+            if (key_size == 128):
+                oid = OID.AES128_OFB
+            elif (key_size == 192):
+                oid = OID.AES192_OFB
+            elif (key_size == 256):
+                oid = OID.AES256_OFB
+        elif (algorithm == AES.CFB):
+            if (key_size == 128):
+                oid = OID.AES128_CFB
+            elif (key_size == 192):
+                oid = OID.AES192_CFB
+            elif (key_size == 256):
+                oid = OID.AES256_CFB
+        elif (algorithm == AES.GCM):
+            if (key_size == 128):
+                oid = OID.AES128_GCM
+            elif (key_size == 192):
+                oid = OID.AES192_GCM
+            elif (key_size == 256):
+                oid = OID.AES256_GCM
+        elif (algorithm == AES.XTS):
+            if (key_size == 256):
+                oid = OID.AES128_XTS
+            elif (key_size == 512):
+                oid = OID.AES256_XTS
+        if (oid is None):
+            raise ValueError('Algorithm not valid')
+        data = [0x06, len(oid)] + list(oid) + [0x81, len(data)] + list(data)
+        if (iv is not None):
+            data += [0x82, len(iv)] + list(iv)
+        if (aad is not None):
+            data += [0x83, len(aad)] + list(aad)
+        resp = self.send(cla=0x80, command=0x78, p1=keyid, p2=Algorithm.ALGO_EXT_CIPHER_ENCRYPT if mode == EncryptionMode.ENCRYPT else Algorithm.ALGO_EXT_CIPHER_DECRYPT, data=data)
         return resp
