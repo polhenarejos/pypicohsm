@@ -64,3 +64,4 @@ class AES:
     CFB         = 4
     GCM         = 5
     XTS         = 6
+    CTR         = 7
