@@ -730,6 +730,13 @@ class PicoHSM:
                 oid = OID.AES192_CTR
             elif (key_size == 256):
                 oid = OID.AES256_CTR
+        elif (algorithm == AES.CCM):
+            if (key_size == 128):
+                oid = OID.AES128_CCM
+            elif (key_size == 192):
+                oid = OID.AES192_CCM
+            elif (key_size == 256):
+                oid = OID.AES256_CCM
         if (oid is None):
             raise ValueError('Algorithm not valid')
         data = [0x06, len(oid)] + list(oid) + [0x81, len(data)] + list(data)

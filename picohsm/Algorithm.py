@@ -65,3 +65,4 @@ class AES:
     GCM         = 5
     XTS         = 6
     CTR         = 7
+    CCM         = 8
