@@ -62,13 +62,17 @@ class EncryptionMode:
     ENCRYPT     = 1
     DECRYPT     = 2
 
+class PinType:
+    USER_PIN    = 0x81
+    SO_PIN      = 0x82
+
 class PicoHSM:
     class EcDummy:
         def __init__(self, name):
             self.name = name
 
-    def __init__(self, pin='648219'):
-        self.__pin = pin
+    def __init__(self, pin=None):
+        self.__pin = pin or '648219'
         cardtype = AnyCardType()
         try:
             # request card insertion
@@ -83,6 +87,10 @@ class PicoHSM:
         self.select_applet()
         data = self.get_contents(p1=0x2f02)
         self.device_id = CVC().decode(data).chr() if data else None
+        try:
+            self.login()
+        except APDUResponse:
+            pass
 
     def select_applet(self):
         self.__card.connection.transmit([0x00, 0xA4, 0x04, 0x00, 0xB, 0xE8, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x81, 0xC3, 0x1F, 0x02, 0x01, 0x0])
@@ -187,10 +195,10 @@ class PicoHSM:
 
         self.send(cla=0x80, command=0x50, data=data)
 
-    def login(self, pin=None):
+    def login(self, pin=None, who=PinType.USER_PIN):
         if (pin is None):
             pin = self.__pin
-        self.send(command=0x20, p2=0x81, data=pin.encode())
+        self.send(command=0x20, p2=who, data=pin.encode())
 
     def get_first_free_id(self):
         kids = self.list_keys(prefix=DOPrefixes.KEY_PREFIX)
@@ -253,21 +261,28 @@ class PicoHSM:
         return keyid
 
     def delete_file(self, p1, p2=None):
-        if (p2):
+        if (p2 is not None):
             self.send(command=0xE4, data=[p1, p2])
         else:
             resp = self.delete_file(p1=p1 >> 8, p2=p1 & 0xff)
 
     def get_contents(self, p1, p2=None):
-        if (p2):
+        if (p2 is not None):
             resp = self.send(command=0xB1, p1=p1, p2=p2, data=[0x54, 0x02, 0x00, 0x00])
         else:
             resp = self.get_contents(p1=p1 >> 8, p2=p1 & 0xff)
         return resp
 
+    def select_file(self, p1, p2=None):
+        if (p2 is not None):
+            resp = self.send(command=0xA4, data=[p1, p2])
+        else:
+            resp = self.select_file(p1=p1 >> 8, p2=p1 & 0xff)
+        return resp
+
     def put_contents(self, p1, p2=None, data=None):
-        if (p2):
-            self.send(command=0xD7, p1=p1, p2=p2, data=[0x54, 0x02, 0x00, 0x00, 0x53, len(data) if data else 0] + list(data) if data else [])
+        if (p2 is not None):
+            self.send(command=0xD7, p1=p1, p2=p2, data=[0x54, 0x02, 0x00, 0x00, 0x53, 0x82] + list(len(data).to_bytes(2, 'big') if data else [0,0]) + list(data) if data else [])
         else:
             self.put_contents(p1=p1 >> 8, p2=p1 & 0xff, data=data)
 
@@ -428,7 +443,7 @@ class PicoHSM:
     def parse_cvc(self, data):
         car = CVC().decode(data).car()
         chr = CVC().decode(data).chr()
-        return {'car': car, 'chr': chr}
+        return {'car': car, 'chr': chr, 'data': data}
 
     def get_termca(self):
         resp = self.get_contents(EF_TERMCA)
