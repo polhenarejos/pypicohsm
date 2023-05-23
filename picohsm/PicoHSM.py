@@ -26,6 +26,7 @@ from .utils import int_to_bytes
 from .const import DEFAULT_PIN, DEFAULT_SOPIN, DEFAULT_RETRIES, EF_TERMCA, DEFAULT_DKEK_SHARES
 from .oid import OID
 import hashlib
+import base58
 
 try:
     from cvc.asn1 import ASN1
@@ -770,3 +771,23 @@ class PicoHSM:
         except APDUResponse:
             pass
 
+    def generate_master_seed(self, curve='secp256k1', id=0x0, seed=None):
+        p1 = 0x1
+        if (curve == 'secp256r1'):
+            p1 = 0x2
+        resp = self.send(cla=0x80, command=0x4A, p1=p1, p2=id, data=seed)
+        return resp
+
+    def derive_node_bip(self, path):
+        data = b''
+        for ix, c in enumerate(path):
+            if ((ix == 0 and c >= 256) or c >= 2**32):
+                raise ValueError('Only integers allowed')
+            data += b'\x02'
+            if (ix == 0):
+                data += b'\x01' + bytes([c])
+            else:
+                data += b'\x04' + c.to_bytes(4, 'big')
+        resp = self.send(cla=0x80, command=0x4A, p1=0x03, p2=0x00, data=data)
+        resp = base58.b58encode_check(resp)
+        return resp

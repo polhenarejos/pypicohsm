@@ -33,7 +33,8 @@ else:
 
 INSTALL_REQUIRES = [
     'setuptools',
-    'cryptography>=3.3'
+    'cryptography>=3.3',
+    'base58'
 ]
 
 if sys.platform.startswith('win32'):
