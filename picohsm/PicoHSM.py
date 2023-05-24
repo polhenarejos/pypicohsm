@@ -772,6 +772,8 @@ class PicoHSM:
             pass
 
     def generate_master_seed(self, curve='secp256k1', id=0x0, seed=None):
+        if (curve not in ['secp256k1', 'secp256r1']):
+            raise ValueError('Unknown curve. Only \'secp256k1\' and \'secp256r1\' are supported')
         p1 = 0x1
         if (curve == 'secp256r1'):
             p1 = 0x2
@@ -791,3 +793,14 @@ class PicoHSM:
         resp = self.send(cla=0x80, command=0x4A, p1=0x03, p2=0x00, data=data)
         resp = base58.b58encode_check(resp)
         return resp
+
+    def decode_xpub(xpub):
+        data = base58.b58decode_check(xpub)
+        return {
+            'type': data[:4],
+            'depth': data[4],
+            'fingerprint': data[5:9],
+            'child': int.from_bytes(data[9:13], 'big'),
+            'chain': data[13:45],
+            'public': data[45:78]
+        }
