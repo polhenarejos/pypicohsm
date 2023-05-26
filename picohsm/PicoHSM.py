@@ -771,7 +771,7 @@ class PicoHSM:
         except APDUResponse:
             pass
 
-    def generate_master_seed(self, curve='secp256k1', id=0x0, seed=None):
+    def hd_generate_master_node(self, curve='secp256k1', id=0x0, seed=None):
         if (curve not in ['secp256k1', 'secp256r1', 'symmetric']):
             raise ValueError('Unknown curve. Only \'secp256k1\', \'secp256r1\' and \'symmetric\' are supported')
         p1 = 0x1
@@ -782,21 +782,26 @@ class PicoHSM:
         resp = self.send(cla=0x80, command=0x4A, p1=p1, p2=id, data=seed)
         return resp
 
-    def derive_node_bip(self, path):
+    def hd_derive_node(self, path):
         data = b''
         for ix, c in enumerate(path):
-            if ((ix == 0 and c >= 256) or c >= 2**32):
+            if ((ix == 0 and c >= 256) or (isinstance(c, int) and c >= 2**32)):
                 raise ValueError('Only integers allowed')
-            data += b'\x02'
-            if (ix == 0):
-                data += b'\x01' + bytes([c])
-            else:
-                data += b'\x04' + c.to_bytes(4, 'big')
+            if (isinstance(c, int)):
+                data += b'\x02'
+                if (ix == 0):
+                    data += b'\x01' + bytes([c])
+                else:
+                    data += b'\x04' + c.to_bytes(4, 'big')
+            elif (isinstance(c, bytes)):
+                if (len(c) >= 128):
+                    raise ValueError('Path larger than 127 bytes')
+                data += b'\x04' + bytes([len(c)]) + c
         resp = self.send(cla=0x80, command=0x4A, p1=0x0A, p2=0x00, data=data)
         resp = base58.b58encode_check(resp)
         return resp
 
-    def decode_xpub(xpub):
+    def hd_decode_xpub(xpub):
         data = base58.b58decode_check(xpub)
         return {
             'type': data[:4],
