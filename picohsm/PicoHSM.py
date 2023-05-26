@@ -771,18 +771,7 @@ class PicoHSM:
         except APDUResponse:
             pass
 
-    def hd_generate_master_node(self, curve='secp256k1', id=0x0, seed=None):
-        if (curve not in ['secp256k1', 'secp256r1', 'symmetric']):
-            raise ValueError('Unknown curve. Only \'secp256k1\', \'secp256r1\' and \'symmetric\' are supported')
-        p1 = 0x1
-        if (curve == 'secp256r1'):
-            p1 = 0x2
-        elif (curve == 'symmetric'):
-            p1 = 0x3
-        resp = self.send(cla=0x80, command=0x4A, p1=p1, p2=id, data=seed)
-        return resp
-
-    def hd_derive_node(self, path):
+    def _hd_encode_path(path):
         data = b''
         for ix, c in enumerate(path):
             if ((ix == 0 and c >= 256) or (isinstance(c, int) and c >= 2**32)):
@@ -797,6 +786,21 @@ class PicoHSM:
                 if (len(c) >= 128):
                     raise ValueError('Path larger than 127 bytes')
                 data += b'\x04' + bytes([len(c)]) + c
+        return data
+
+    def hd_generate_master_node(self, curve='secp256k1', id=0x0, seed=None):
+        if (curve not in ['secp256k1', 'secp256r1', 'symmetric']):
+            raise ValueError('Unknown curve. Only \'secp256k1\', \'secp256r1\' and \'symmetric\' are supported')
+        p1 = 0x1
+        if (curve == 'secp256r1'):
+            p1 = 0x2
+        elif (curve == 'symmetric'):
+            p1 = 0x3
+        resp = self.send(cla=0x80, command=0x4A, p1=p1, p2=id, data=seed)
+        return resp
+
+    def hd_derive_node(self, path):
+        data = PicoHSM._hd_encode_path(path)
         resp = self.send(cla=0x80, command=0x4A, p1=0x0A, p2=0x00, data=data)
         resp = base58.b58encode_check(resp)
         return resp
@@ -811,3 +815,9 @@ class PicoHSM:
             'chain': data[13:45],
             'public': data[45:78]
         }
+
+    def hd_signature(self, path, data):
+        path = PicoHSM._hd_encode_path(path)
+        self.send(cla=0x80, command=0x4A, p1=0x10, p2=0x00, data=path)
+        resp = self.send(cla=0x80, command=0x68, p1=0x00, p2=0xA0, data=hashlib.sha256(data).digest())
+        return resp
