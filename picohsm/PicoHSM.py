@@ -821,3 +821,19 @@ class PicoHSM:
         self.send(cla=0x80, command=0x4A, p1=0x10, p2=0x00, data=path)
         resp = self.send(cla=0x80, command=0x68, p1=0x00, p2=0xA0, data=hashlib.sha256(data).digest())
         return resp
+
+    def hd_cipher(self, path, aad, data, mode, ask_on_encrypt=True, ask_on_decrypt=True, iv=b""):
+        if (len(data) % 16 > 0):
+            raise ValueError("Input length must be a multiple of 16")
+        oid = OID.HD
+        data = [0x06, len(oid)] + list(oid) + [0x81, len(data)] + list(data)
+        if (iv is not None):
+            data += [0x82, len(iv)] + list(iv)
+        if (aad is not None):
+            aad += b"E1" if ask_on_encrypt else b"E0"
+            aad += b"D1" if ask_on_decrypt else b"D0"
+            data += [0x83, len(aad)] + list(aad)
+        path = PicoHSM._hd_encode_path(path)
+        self.send(cla=0x80, command=0x4A, p1=0x10, p2=0x00, data=path)
+        resp = self.send(cla=0x80, command=0x78, p1=0x00, p2=Algorithm.ALGO_EXT_CIPHER_ENCRYPT if mode == EncryptionMode.ENCRYPT else Algorithm.ALGO_EXT_CIPHER_DECRYPT, data=data)
+        return resp
