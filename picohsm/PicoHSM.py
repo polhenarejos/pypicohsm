@@ -32,7 +32,7 @@ try:
     from cvc.asn1 import ASN1
     from cvc import oid
     from cvc.certificates import CVC
-    from cvc.ec_curves import ec_domain, find_curve
+    from cvc.ec_curves import EcCurve
 except ModuleNotFoundError:
     print('ERROR: cvc module not found! Install pycvc package.\nTry with `pip install pycvc`')
     sys.exit(-1)
@@ -46,10 +46,10 @@ except ModuleNotFoundError:
     sys.exit(-1)
 
 try:
-    from cryptography.hazmat.primitives.asymmetric import ec, rsa, utils, padding
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa, utils, padding, x25519, x448
     from cryptography.hazmat.primitives import hashes, cmac
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
 except ModuleNotFoundError:
     print('ERROR: cryptography module not found! Install cryptography package.\nTry with `pip install cryptography`')
     sys.exit(-1)
@@ -68,10 +68,6 @@ class PinType:
     SO_PIN      = 0x82
 
 class PicoHSM:
-    class EcDummy:
-        def __init__(self, name):
-            self.name = name
-
     def __init__(self, pin=None):
         self.__pin = pin or '648219'
         cardtype = AnyCardType()
@@ -233,10 +229,10 @@ class PicoHSM:
                     raise ValueError('RSA bits must be in the range [1024,4096]')
                 a.add_tag(0x7f49, ASN1().add_oid(oid.ID_TA_RSA_V1_5_SHA_256).add_tag(0x2, param.to_bytes(2, 'big')).encode())
             elif (type == KeyType.ECC):
-                if (param not in ('secp192r1', 'secp256r1', 'secp384r1', 'secp521r1', 'brainpoolP256r1', 'brainpoolP384r1', 'brainpoolP512r1', 'secp192k1', 'secp256k1')):
+                if (param not in ('secp192r1', 'secp256r1', 'secp384r1', 'secp521r1', 'brainpoolP256r1', 'brainpoolP384r1', 'brainpoolP512r1', 'secp192k1', 'secp256k1', 'curve25519', 'curve448')):
                     raise ValueError('Bad elliptic curve name')
 
-                dom = ec_domain(PicoHSM.EcDummy(param))
+                dom = EcCurve.from_name(param)
                 pubctx = {1: dom.P, 2: dom.A, 3: dom.B, 4: dom.G, 5: dom.O, 7: dom.F}
                 a.add_object(0x7f49, oid.ID_TA_ECDSA_SHA_256, pubctx)
             a.add_tag(0x5f20, 'UTCDUMMY00001'.encode())
@@ -293,12 +289,19 @@ class PicoHSM:
         cert = bytearray(response)
         roid = CVC().decode(cert).pubkey().oid()
         if (roid == oid.ID_TA_ECDSA_SHA_256):
-            curve = find_curve(ec_domain(PicoHSM.EcDummy(param)).P)
+            curve = EcCurve.to_crypto(EcCurve.from_name(param))
             Y = bytes(CVC().decode(cert).pubkey().find(0x86).data())
             return ec.EllipticCurvePublicKey.from_encoded_point(
                         curve,
                         Y,
                     )
+        elif (roid == oid.ID_RI_ECDH_SHA_256):
+            Y = bytes(CVC().decode(cert).pubkey().find(0x84).data())
+            G = bytes(CVC().decode(cert).pubkey().find(0x83).data())
+            if (G == b'\x82\x40'):
+                return x25519.X25519PublicKey.from_public_bytes(Y)
+            elif (G == b'\x4A\x44'):
+                return x448.X448PublicKey.from_public_bytes(Y)
         elif (roid == oid.ID_TA_RSA_V1_5_SHA_256):
             n = int.from_bytes(bytes(CVC().decode(cert).pubkey().find(0x81).data()), 'big')
             e = int.from_bytes(bytes(CVC().decode(cert).pubkey().find(0x82).data()), 'big')
@@ -367,7 +370,7 @@ class PicoHSM:
         if (isinstance(pkey, rsa.RSAPrivateKey)):
             data += b'\x05'
             algo = OID.RSA
-        elif (isinstance(pkey, ec.EllipticCurvePrivateKey)):
+        elif (isinstance(pkey, ec.EllipticCurvePrivateKey) or isinstance(pkey, x25519.X25519PrivateKey) or isinstance(pkey, x448.X448PrivateKey)):
             data += b'\x0C'
             algo = OID.EC
         elif (isinstance(pkey, bytes)):
@@ -393,8 +396,14 @@ class PicoHSM:
             kb += int_to_bytes(pubnum.n)
             kb += int_to_bytes((pubnum.e.bit_length()+7)//8, length=2)
             kb += int_to_bytes(pubnum.e)
-        elif (isinstance(pkey, ec.EllipticCurvePrivateKey)):
-            curve = ec_domain(pkey.curve)
+        elif (isinstance(pkey, ec.EllipticCurvePrivateKey) or isinstance(pkey, x25519.X25519PrivateKey) or isinstance(pkey, x448.X448PrivateKey)):
+            if (isinstance(pkey, x25519.X25519PrivateKey)):
+                name = 'curve25519'
+            elif (isinstance(pkey, x448.X448PrivateKey)):
+                name = 'curve448'
+            else:
+                name = pkey.curve.name
+            curve = EcCurve.from_name(name)
             kb += int_to_bytes(len(curve.P)*8, length=2)
             kb += int_to_bytes(len(curve.A), length=2)
             kb += curve.A
@@ -406,11 +415,19 @@ class PicoHSM:
             kb += curve.O
             kb += int_to_bytes(len(curve.G), length=2)
             kb += curve.G
-            kb += int_to_bytes((pkey.private_numbers().private_value.bit_length()+7)//8, length=2)
-            kb += int_to_bytes(pkey.private_numbers().private_value)
-            p = pkey.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
-            kb += int_to_bytes(len(p), length=2)
-            kb += p
+            if (isinstance(pkey, x25519.X25519PrivateKey) or isinstance(pkey, x448.X448PrivateKey)):
+                raw = pkey.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+                kb += int_to_bytes(len(raw), length=2)
+                kb += raw
+                raw = pkey.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+                kb += int_to_bytes(len(raw), length=2)
+                kb += raw
+            else:
+                kb += int_to_bytes((pkey.private_numbers().private_value.bit_length()+7)//8, length=2)
+                kb += int_to_bytes(pkey.private_numbers().private_value)
+                p = pkey.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+                kb += int_to_bytes(len(p), length=2)
+                kb += p
         elif (isinstance(pkey, bytes)):
             kb += int_to_bytes(len(pkey), length=2)
             kb += pkey
