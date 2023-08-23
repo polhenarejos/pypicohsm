@@ -455,7 +455,11 @@ class PicoHSM:
         return resp
 
     def exchange(self, keyid, pubkey):
-        resp = self.send(cla=0x80, command=0x62, p1=keyid, p2=Algorithm.ALGO_EC_ECDH, data=pubkey.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint))
+        if (isinstance(pubkey, x25519.X25519PublicKey) or isinstance(pubkey, x448.X448PublicKey)):
+            data = pubkey.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        else:
+            data = pubkey.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+        resp = self.send(cla=0x80, command=0x62, p1=keyid, p2=Algorithm.ALGO_EC_ECDH, data=data)
         return resp[1:]
 
     def parse_cvc(self, data):
