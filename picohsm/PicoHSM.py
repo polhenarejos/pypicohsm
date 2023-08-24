@@ -32,7 +32,7 @@ try:
     from cvc.asn1 import ASN1
     from cvc import oid
     from cvc.certificates import CVC
-    from cvc.ec_curves import EcCurve
+    from cvc.ec_curves import EcCurve, Curve25519, Curve448
 except ModuleNotFoundError:
     print('ERROR: cvc module not found! Install pycvc package.\nTry with `pip install pycvc`')
     sys.exit(-1)
@@ -46,7 +46,7 @@ except ModuleNotFoundError:
     sys.exit(-1)
 
 try:
-    from cryptography.hazmat.primitives.asymmetric import ec, rsa, utils, padding, x25519, x448
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa, utils, padding, x25519, x448, ed25519, ed448
     from cryptography.hazmat.primitives import hashes, cmac
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, PrivateFormat, NoEncryption
@@ -229,11 +229,14 @@ class PicoHSM:
                     raise ValueError('RSA bits must be in the range [1024,4096]')
                 a.add_tag(0x7f49, ASN1().add_oid(oid.ID_TA_RSA_V1_5_SHA_256).add_tag(0x2, param.to_bytes(2, 'big')).encode())
             elif (type == KeyType.ECC):
-                if (param not in ('secp192r1', 'secp256r1', 'secp384r1', 'secp521r1', 'brainpoolP256r1', 'brainpoolP384r1', 'brainpoolP512r1', 'secp192k1', 'secp256k1', 'curve25519', 'curve448')):
+                if (param not in ('secp192r1', 'secp256r1', 'secp384r1', 'secp521r1', 'brainpoolP256r1', 'brainpoolP384r1', 'brainpoolP512r1', 'secp192k1', 'secp256k1', 'curve25519', 'curve448', 'ed25519', 'ed448')):
                     raise ValueError('Bad elliptic curve name')
 
                 dom = EcCurve.from_name(param)
-                pubctx = {1: dom.P, 2: dom.A, 3: dom.B, 4: dom.G, 5: dom.O, 7: dom.F}
+                if (param in ('curve25519', 'curve448', 'ed25519', 'ed448')):
+                    pubctx = {1: dom.P, 2: dom.O, 3: dom.G}
+                else:
+                    pubctx = {1: dom.P, 2: dom.A, 3: dom.B, 4: dom.G, 5: dom.O, 7: dom.F}
                 a.add_object(0x7f49, oid.ID_TA_ECDSA_SHA_256, pubctx)
             a.add_tag(0x5f20, 'UTCDUMMY00001'.encode())
             data = a.encode()
@@ -298,9 +301,15 @@ class PicoHSM:
         elif (roid == oid.ID_RI_ECDH_SHA_256):
             Y = bytes(CVC().decode(cert).pubkey().find(0x84).data())
             G = bytes(CVC().decode(cert).pubkey().find(0x83).data())
-            if (G == b'\x82\x40'):
+            P = bytes(CVC().decode(cert).pubkey().find(0x81).data())
+            curve = EcCurve.from_P(P)
+            if (isinstance(curve(), Curve25519)):
+                if (G[0] != 9):
+                    return ed25519.Ed25519PublicKey.from_public_bytes(Y)
                 return x25519.X25519PublicKey.from_public_bytes(Y)
-            elif (G == b'\x4A\x44'):
+            elif (isinstance(curve(), Curve448)):
+                if (len(G) != 56 or G[0] != 5):
+                    return ed448.Ed448PublicKey.from_public_bytes(Y)
                 return x448.X448PublicKey.from_public_bytes(Y)
         elif (roid == oid.ID_TA_RSA_V1_5_SHA_256):
             n = int.from_bytes(bytes(CVC().decode(cert).pubkey().find(0x81).data()), 'big')
@@ -308,44 +317,46 @@ class PicoHSM:
             return rsa.RSAPublicNumbers(e, n).public_key()
         return None
 
-    def sign(self, keyid, scheme, data):
-        resp = self.send(cla=0x80, command=0x68, p1=keyid, p2=scheme, data=data)
+    def sign(self, keyid, data, scheme=None):
+        resp = self.send(cla=0x80, command=0x68, p1=keyid, p2=scheme or 0x00, data=data)
         return resp
 
-    def verify(self, pubkey, data, signature, scheme):
-        if (Algorithm.ALGO_EC_RAW <= scheme <= Algorithm.ALGO_EC_SHA512):
-            if (scheme == Algorithm.ALGO_EC_SHA1):
-                hsh = hashes.SHA1()
-            elif (scheme == Algorithm.ALGO_EC_SHA224):
-                hsh = hashes.SHA224()
-            elif (scheme == Algorithm.ALGO_EC_SHA256):
-                hsh = hashes.SHA256()
-            elif (scheme == Algorithm.ALGO_EC_RAW):
-                hsh = utils.Prehashed(hashes.SHA512())
-            elif (scheme == Algorithm.ALGO_EC_SHA384):
-                hsh = hashes.SHA384()
-            elif (scheme == Algorithm.ALGO_EC_SHA512):
-                hsh = hashes.SHA512()
-            return pubkey.verify(signature, data, ec.ECDSA(hsh))
-        elif (Algorithm.ALGO_RSA_PKCS1_SHA1 <= scheme <= Algorithm.ALGO_RSA_PSS_SHA512):
-            if (scheme == Algorithm.ALGO_RSA_PKCS1_SHA1 or scheme == Algorithm.ALGO_RSA_PSS_SHA1):
-                hsh = hashes.SHA1()
-            elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA224 or scheme == Algorithm.ALGO_RSA_PSS_SHA224):
-                hsh = hashes.SHA224()
-            elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA256 or scheme == Algorithm.ALGO_RSA_PSS_SHA256):
-                hsh = hashes.SHA256()
-            elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA384 or scheme == Algorithm.ALGO_RSA_PSS_SHA384):
-                hsh = hashes.SHA384()
-            elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA512 or scheme == Algorithm.ALGO_RSA_PSS_SHA512):
-                hsh = hashes.SHA512()
-            if (Algorithm.ALGO_RSA_PKCS1_SHA1 <= scheme <= Algorithm.ALGO_RSA_PKCS1_SHA512):
-                padd = padding.PKCS1v15()
-            elif (Algorithm.ALGO_RSA_PSS_SHA1 <= scheme <= Algorithm.ALGO_RSA_PSS_SHA512):
-                padd = padding.PSS(
-                    mgf=padding.MGF1(hsh),
-                    salt_length=padding.PSS.AUTO
-                )
-            return pubkey.verify(signature, data, padd, hsh)
+    def verify(self, pubkey, data, signature, scheme=None):
+        if (scheme):
+            if (Algorithm.ALGO_EC_RAW <= scheme <= Algorithm.ALGO_EC_SHA512):
+                if (scheme == Algorithm.ALGO_EC_SHA1):
+                    hsh = hashes.SHA1()
+                elif (scheme == Algorithm.ALGO_EC_SHA224):
+                    hsh = hashes.SHA224()
+                elif (scheme == Algorithm.ALGO_EC_SHA256):
+                    hsh = hashes.SHA256()
+                elif (scheme == Algorithm.ALGO_EC_RAW):
+                    hsh = utils.Prehashed(hashes.SHA512())
+                elif (scheme == Algorithm.ALGO_EC_SHA384):
+                    hsh = hashes.SHA384()
+                elif (scheme == Algorithm.ALGO_EC_SHA512):
+                    hsh = hashes.SHA512()
+                return pubkey.verify(signature, data, ec.ECDSA(hsh))
+            elif (Algorithm.ALGO_RSA_PKCS1_SHA1 <= scheme <= Algorithm.ALGO_RSA_PSS_SHA512):
+                if (scheme == Algorithm.ALGO_RSA_PKCS1_SHA1 or scheme == Algorithm.ALGO_RSA_PSS_SHA1):
+                    hsh = hashes.SHA1()
+                elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA224 or scheme == Algorithm.ALGO_RSA_PSS_SHA224):
+                    hsh = hashes.SHA224()
+                elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA256 or scheme == Algorithm.ALGO_RSA_PSS_SHA256):
+                    hsh = hashes.SHA256()
+                elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA384 or scheme == Algorithm.ALGO_RSA_PSS_SHA384):
+                    hsh = hashes.SHA384()
+                elif (scheme == Algorithm.ALGO_RSA_PKCS1_SHA512 or scheme == Algorithm.ALGO_RSA_PSS_SHA512):
+                    hsh = hashes.SHA512()
+                if (Algorithm.ALGO_RSA_PKCS1_SHA1 <= scheme <= Algorithm.ALGO_RSA_PKCS1_SHA512):
+                    padd = padding.PKCS1v15()
+                elif (Algorithm.ALGO_RSA_PSS_SHA1 <= scheme <= Algorithm.ALGO_RSA_PSS_SHA512):
+                    padd = padding.PSS(
+                        mgf=padding.MGF1(hsh),
+                        salt_length=padding.PSS.AUTO
+                    )
+                return pubkey.verify(signature, data, padd, hsh)
+        return pubkey.verify(signature, data)
 
     def decrypt(self, keyid, data, pad):
         if (isinstance(pad, padding.OAEP)):
@@ -370,7 +381,7 @@ class PicoHSM:
         if (isinstance(pkey, rsa.RSAPrivateKey)):
             data += b'\x05'
             algo = OID.RSA
-        elif (isinstance(pkey, ec.EllipticCurvePrivateKey) or isinstance(pkey, x25519.X25519PrivateKey) or isinstance(pkey, x448.X448PrivateKey)):
+        elif (isinstance(pkey, (ec.EllipticCurvePrivateKey, x25519.X25519PrivateKey, x448.X448PrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey))):
             data += b'\x0C'
             algo = OID.EC
         elif (isinstance(pkey, bytes)):
@@ -396,11 +407,15 @@ class PicoHSM:
             kb += int_to_bytes(pubnum.n)
             kb += int_to_bytes((pubnum.e.bit_length()+7)//8, length=2)
             kb += int_to_bytes(pubnum.e)
-        elif (isinstance(pkey, ec.EllipticCurvePrivateKey) or isinstance(pkey, x25519.X25519PrivateKey) or isinstance(pkey, x448.X448PrivateKey)):
+        elif (isinstance(pkey, (ec.EllipticCurvePrivateKey, x25519.X25519PrivateKey, x448.X448PrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey))):
             if (isinstance(pkey, x25519.X25519PrivateKey)):
                 name = 'curve25519'
             elif (isinstance(pkey, x448.X448PrivateKey)):
                 name = 'curve448'
+            elif (isinstance(pkey, ed25519.Ed25519PrivateKey)):
+                name = 'Ed25519'
+            elif (isinstance(pkey, ed448.Ed448PrivateKey)):
+                name = 'Ed448'
             else:
                 name = pkey.curve.name
             curve = EcCurve.from_name(name)
@@ -415,7 +430,7 @@ class PicoHSM:
             kb += curve.O
             kb += int_to_bytes(len(curve.G), length=2)
             kb += curve.G
-            if (isinstance(pkey, x25519.X25519PrivateKey) or isinstance(pkey, x448.X448PrivateKey)):
+            if (isinstance(pkey, (x25519.X25519PrivateKey, x448.X448PrivateKey, ed25519.Ed25519PrivateKey, ed448.Ed448PrivateKey))):
                 raw = pkey.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
                 kb += int_to_bytes(len(raw), length=2)
                 kb += raw
