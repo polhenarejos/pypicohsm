@@ -67,6 +67,15 @@ class PinType:
     USER_PIN    = 0x81
     SO_PIN      = 0x88
 
+class Options:
+    RESET_RETRY_COUNTER = 0x0001    # Enable or disable RESET RETRY COUNTER command
+    TRANSPORT_PIN       = 0x0002    # Enable or disable transport PIN mode
+    SESSION_PIN         = 0x0004    # Enable session PIN (clear on reset)
+    SESSION_PIN_EXPL    = 0x000C    # Enable session PIN (explicit clear)
+    PKA_REPLACEABLE     = 0x0008    # Enable or disable replacing of a PKA key
+    AUTH_PIN_PKA        = 0x0010    # Enable the combined authentication mode of user pin and public key authentication
+    RRC_ONLY_RESET      = 0x0020    # If enabled RESET RETRY COUNTER only resets the error counter
+
 class PicoHSM:
     def __init__(self, pin=None):
         self.__pin = pin or '648219'
@@ -158,7 +167,7 @@ class PicoHSM:
     def logout(self):
         self.select_applet()
 
-    def initialize(self, pin=DEFAULT_PIN, sopin=DEFAULT_SOPIN, options=None, retries=DEFAULT_RETRIES, dkek_shares=None, puk_auts=None, puk_min_auts=None, key_domains=None):
+    def initialize(self, pin=DEFAULT_PIN, sopin=DEFAULT_SOPIN, options=Options.RESET_RETRY_COUNTER, retries=DEFAULT_RETRIES, dkek_shares=None, puk_auts=None, puk_min_auts=None, key_domains=None):
         if (retries is not None and not 0 < retries <= 10):
             raise ValueError('Retries must be in the range (0,10]')
         if (dkek_shares is not None and not 0 <= dkek_shares <= 10):
@@ -175,6 +184,8 @@ class PicoHSM:
             raise ValueError('Key Domains must be in the range (0,8]')
 
         a = ASN1()
+        if (options is not None):
+            a = a.add_tag(0x80, options.to_bytes(2, 'big'))
         if (pin is not None):
             a = a.add_tag(0x81, pin.encode())
         if (sopin is not None):
