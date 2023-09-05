@@ -65,7 +65,7 @@ class EncryptionMode:
 
 class PinType:
     USER_PIN    = 0x81
-    SO_PIN      = 0x82
+    SO_PIN      = 0x88
 
 class PicoHSM:
     def __init__(self, pin=None):
