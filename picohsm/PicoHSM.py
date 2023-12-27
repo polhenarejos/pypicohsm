@@ -383,7 +383,7 @@ class PicoHSM:
         resp = self.send(cla=0x80, command=0x52, p1=0x0, p2=key_domain, data=dkek)
         return resp
 
-    def import_key(self, pkey, dkek=None, purposes=None):
+    def wrap_key(pkey, dkek=None, purposes=None):
         data = b''
         kcv = hashlib.sha256(dkek or b'\x00'*32).digest()[:8]
         kenc = hashlib.sha256((dkek or b'\x00'*32) + b'\x00\x00\x00\x01').digest()
@@ -471,6 +471,10 @@ class PicoHSM:
         c = cmac.CMAC(algorithms.AES(kmac))
         c.update(data)
         data += c.finalize()
+        return data
+
+    def import_key(self, pkey, dkek=None, purposes=None):
+        data = PicoHSM.wrap_key(pkey, dkek, purposes)
 
         p1 = self.get_first_free_id()
         _ = self.send(cla=0x80, command=0x74, p1=p1, p2=0x93, data=data)
@@ -511,19 +515,22 @@ class PicoHSM:
         resp = self.send(cla=0x80, command=0x50)
         return resp[5]+0.1*resp[6]
 
+    def __parse_key_domain(resp):
+        ret = {
+                'dkek': {
+                    'total': resp[0],
+                    'missing': resp[1]
+                },
+                'kcv': resp[2:10]
+            }
+        if (len(resp) > 10):
+            ret.update({'xkek': resp[10:]})
+        return ret
+
     def get_key_domain(self, key_domain=0):
         resp, code = self.send(cla=0x80, command=0x52, p2=key_domain, codes=[0x9000, 0x6A88, 0x6A86])
         if (code == 0x9000):
-            ret = {
-                    'dkek': {
-                        'total': resp[0],
-                        'missing': resp[1]
-                    },
-                    'kcv': resp[2:10]
-                }
-            if (len(resp) > 10):
-                ret.update({'xkek': resp[10:]})
-            return ret
+            return PicoHSM.__parse_key_domain(resp)
         return {'error': code}
 
     def get_key_domains(self):
@@ -535,7 +542,7 @@ class PicoHSM:
 
     def set_key_domain(self, key_domain=0, total=DEFAULT_DKEK_SHARES):
         resp = self.send(cla=0x80, command=0x52, p1=0x1, p2=key_domain, data=[total])
-        return resp
+        return PicoHSM.__parse_key_domain(resp)
 
     def clear_key_domain(self, key_domain=0):
         resp = self.send(cla=0x80, command=0x52, p1=0x4, p2=key_domain)
