@@ -142,15 +142,50 @@ class SecureChannel:
 
         macb = list(self.__sm_counter.to_bytes(self.BLOCK_SIZE, 'big')) + [cla, ins, p1, p2, 0x80] + [0x00] * (self.BLOCK_SIZE - 5) + list(body) + do_le + [0x80]
         macb += [0x00] * (self.BLOCK_SIZE - (len(macb) % self.BLOCK_SIZE))
-        c = cmac.CMAC(algorithms.AES(self.__sm_kmac))
-        c.update(bytes(macb))
-        macc = c.finalize()
+        macc = self.__sm_sign(bytes(macb))
         do_mac = ASN1().add_tag(0x8E, list(macc)).encode()
 
         new_lc = list((len(body) + len(do_le) + len(do_mac)).to_bytes(3, 'big'))
 
         apdu = [cla, ins, p1, p2] + new_lc + list(body) + do_le + list(do_mac) + [0x00, 0x00]
         return apdu
+
+    def unwrap_rapdu(self, apdu):
+        self.__sm_inc_counter()
+        signature = ASN1().decode(apdu).find(0x8E).data()
+        body = ASN1().decode(apdu).find(0x87)
+        sw = ASN1().decode(apdu).find(0x99)
+        if (not sw):
+            raise ValueError("SM: no sw found")
+        sw = sw.data()
+        do_sw = ASN1.make_tag(0x99, sw)
+        macb = bytearray(self.__sm_counter.to_bytes(self.BLOCK_SIZE, 'big'))
+        if (body):
+            body = body.data()
+            if (body and body[0] != 0x1):
+                raise ValueError("SM: data not consistent")
+            do_body = ASN1.make_tag(0x87, body)
+            macb += do_body
+        macb += do_sw
+        macb += bytearray([0x80])
+        macb += bytearray([0x00] * (self.BLOCK_SIZE - (len(macb) % self.BLOCK_SIZE)))
+        sign = self.__sm_sign(bytes(macb))[:len(signature)]
+        if (signature != sign):
+            raise ValueError("SM: signature mismatch")
+        rapdu = []
+        if (body):
+            body = body[1:]
+            iv = self.__sm_iv()
+            cipher = Cipher(algorithms.AES(self.__sm_kenc), modes.CBC(iv))
+            decryptor = cipher.decryptor()
+            ct = decryptor.update(bytes(body)) + decryptor.finalize()
+            l = len(ct) - 1
+            while (l >= 0 and ct[l] == 0x00):
+                l -= 1
+            if (l < 0 or ct[l] != 0x80):
+                raise ValueError("SM: body malformed")
+            rapdu = list(ct[:l])
+        return rapdu, sw[0] << 8 | sw[1]
 
 
 class PicoHSM:
@@ -229,10 +264,13 @@ class PicoHSM:
                     apdu = [0x00, 0xC0, 0x00, 0x00, sw2]
                     resp, sw1, sw2 = self.__card.connection.transmit(apdu)
                     response += resp
-                return bytes(response)
-
-            if (code not in codes):
+                code = (sw1<<8|sw2)
+            if (code not in codes and code != 0x9000):
                 raise APDUResponse(sw1, sw2)
+        if (self.__sc):
+            response, code = self.__sc.unwrap_rapdu(response)
+            if (code not in codes and code != 0x9000):
+                raise APDUResponse(code >> 8, code & 0xff)
         if (len(codes) > 1):
             return bytes(response), code
         return bytes(response)
