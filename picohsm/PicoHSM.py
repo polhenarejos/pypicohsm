@@ -223,6 +223,13 @@ class PicoHSM:
                     response, sw1, sw2 = self.__card.connection.transmit(apdu)
                     if (sw1 == 0x90):
                         return response
+            elif (sw1 == 0x61):
+                response = []
+                while (sw1 == 0x61):
+                    apdu = [0x00, 0xC0, 0x00, 0x00, sw2]
+                    resp, sw1, sw2 = self.__card.connection.transmit(apdu)
+                    response += resp
+                return bytes(response)
 
             if (code not in codes):
                 raise APDUResponse(sw1, sw2)
