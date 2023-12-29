@@ -76,7 +76,86 @@ class Options:
     AUTH_PIN_PKA        = 0x0010    # Enable the combined authentication mode of user pin and public key authentication
     RRC_ONLY_RESET      = 0x0020    # If enabled RESET RETRY COUNTER only resets the error counter
 
+class SecureChannel:
+    OID_ID_CA_ECDH_AES_CBC_CMAC_128 = b'\x04\x00\x7F\x00\x07\x02\x02\x03\x02\x02'
+    BLOCK_SIZE = 16
+
+    PROTO_OID = OID_ID_CA_ECDH_AES_CBC_CMAC_128
+
+    def __init__(self, shared=None, nonce=None):
+        self.__derive_sm_keys(shared=shared, nonce=nonce)
+
+    def __derive_sm_key(input=None, counter=0, nonce=None):
+        b = b''
+        if (input):
+            b += input
+        if (nonce):
+            b += nonce
+        b += counter.to_bytes(4, 'big')
+        digest = hashlib.sha1(b).digest()
+        return digest[:16]
+
+    def __derive_sm_keys(self, shared, nonce):
+        self.__sm_kenc = SecureChannel.__derive_sm_key(shared, 1, nonce)
+        self.__sm_kmac = SecureChannel.__derive_sm_key(shared, 2, nonce)
+        self.__sm_counter = 0
+
+    def __sm_sign(self, data):
+        c = cmac.CMAC(algorithms.AES(self.__sm_kmac))
+        c.update(data)
+        return c.finalize()
+
+    def __sm_inc_counter(self):
+        self.__sm_counter += 1
+
+    def __sm_iv(self):
+        iv = b'\x00'*16
+        cipher = Cipher(algorithms.AES(self.__sm_kenc), modes.CBC(iv))
+        encryptor = cipher.encryptor()
+        message = self.__sm_counter.to_bytes(self.BLOCK_SIZE, 'big')
+        ct = encryptor.update(message) + encryptor.finalize()
+        return ct
+
+    def verify_token(self, token, pbkey):
+        a = ASN1().add_tag(0x7F49, ASN1().add_oid(self.PROTO_OID).add_tag(0x86, pbkey).encode())
+        signature = self.__sm_sign(a.encode())
+        return signature[:len(token)] == token
+
+    def wrap_apdu(self, apdu):
+        cla, ins, p1, p2, lc, data, le = apdu[0], apdu[1], apdu[2], apdu[3], apdu[4:7], apdu[7:-2], apdu[-2:]
+        cla |= 0x0C
+
+        data += [0x80]
+        data += [0x00] * (self.BLOCK_SIZE - (len(data) % self.BLOCK_SIZE))
+
+        self.__sm_inc_counter()
+        iv = self.__sm_iv()
+        cipher = Cipher(algorithms.AES(self.__sm_kenc), modes.CBC(iv))
+        encryptor = cipher.encryptor()
+        ct = encryptor.update(bytes(data)) + encryptor.finalize()
+        if (ins & 0x1 == 0):
+            tlv_body = [0x01] + list(ct)
+            body = ASN1().add_tag(0x87, tlv_body).encode()
+        else:
+            body = ASN1().add_tag(0x85, list(ct)).encode()
+        do_le = [0x97, 0x02] + le
+
+        macb = list(self.__sm_counter.to_bytes(self.BLOCK_SIZE, 'big')) + [cla, ins, p1, p2, 0x80] + [0x00] * (self.BLOCK_SIZE - 5) + list(body) + do_le + [0x80]
+        macb += [0x00] * (self.BLOCK_SIZE - (len(macb) % self.BLOCK_SIZE))
+        c = cmac.CMAC(algorithms.AES(self.__sm_kmac))
+        c.update(bytes(macb))
+        macc = c.finalize()
+        do_mac = ASN1().add_tag(0x8E, list(macc)).encode()
+
+        new_lc = list((len(body) + len(do_le) + len(do_mac)).to_bytes(3, 'big'))
+
+        apdu = [cla, ins, p1, p2] + new_lc + list(body) + do_le + list(do_mac) + [0x00, 0x00]
+        return apdu
+
+
 class PicoHSM:
+    __sc = None
+
     def __init__(self, pin=None):
         self.__pin = pin or '648219'
         cardtype = AnyCardType()
@@ -119,6 +198,9 @@ class PicoHSM:
             apdu = [cla, command]
 
         apdu = apdu + [p1, p2] + lc + dataf + le
+        if (self.__sc):
+            apdu = self.__sc.wrap_apdu(apdu)
+
         try:
             response, sw1, sw2 = self.__card.connection.transmit(apdu)
         except CardConnectionException:
@@ -141,6 +223,7 @@ class PicoHSM:
                     response, sw1, sw2 = self.__card.connection.transmit(apdu)
                     if (sw1 == 0x90):
                         return response
+
             if (code not in codes):
                 raise APDUResponse(sw1, sw2)
         if (len(codes) > 1):
@@ -381,7 +464,12 @@ class PicoHSM:
 
     def import_dkek(self, dkek, key_domain=0):
         resp = self.send(cla=0x80, command=0x52, p1=0x0, p2=key_domain, data=dkek)
-        return resp
+        return PicoHSM.__parse_key_domain(resp)
+
+    def __pubkey_uncompressed(pubkey):
+        if (isinstance(pubkey, ec.EllipticCurvePrivateKey)):
+            pubkey = pubkey.public_key()
+        return pubkey.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
 
     def wrap_key(pkey, dkek=None, purposes=None):
         data = b''
@@ -451,7 +539,7 @@ class PicoHSM:
             else:
                 kb += int_to_bytes((pkey.private_numbers().private_value.bit_length()+7)//8, length=2)
                 kb += int_to_bytes(pkey.private_numbers().private_value)
-                p = pkey.public_key().public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+                p = PicoHSM.__pubkey_uncompressed(pkey)
                 kb += int_to_bytes(len(p), length=2)
                 kb += p
         elif (isinstance(pkey, bytes)):
@@ -488,7 +576,7 @@ class PicoHSM:
         if (isinstance(pubkey, x25519.X25519PublicKey) or isinstance(pubkey, x448.X448PublicKey)):
             data = pubkey.public_bytes(Encoding.Raw, PublicFormat.Raw)
         else:
-            data = pubkey.public_bytes(Encoding.X962, PublicFormat.UncompressedPoint)
+            data = PicoHSM.__pubkey_uncompressed(pubkey)
         resp = self.send(cla=0x80, command=0x62, p1=keyid, p2=Algorithm.ALGO_EC_ECDH, data=data)
         return resp[1:]
 
@@ -891,3 +979,34 @@ class PicoHSM:
         self.send(cla=0x80, command=0x4A, p1=0x10, p2=0x00, data=path)
         resp = self.send(cla=0x80, command=0x78, p1=0x00, p2=Algorithm.ALGO_EXT_CIPHER_ENCRYPT if mode == EncryptionMode.ENCRYPT else Algorithm.ALGO_EXT_CIPHER_DECRYPT, data=data)
         return resp
+
+    def general_authentication(self):
+        self.send(command=0x22, p1=0x41, p2=0xA4, data=ASN1().add_tag(0x80, SecureChannel.PROTO_OID).encode())
+        pkeyB = ec.generate_private_key(ec.SECP256R1())
+        pbkeyB = pkeyB.public_key()
+        pbkeyBbytes = PicoHSM.__pubkey_uncompressed(pbkeyB)
+        dado = ASN1().add_tag(0x7C, ASN1().add_tag(0x80, pbkeyBbytes).encode()).encode()
+        resp = self.send(command=0x86, data=dado)
+        a = ASN1().decode(resp).find(0x7C)
+        if (not a):
+            raise ValueError("SM: cannot find tag 7C")
+        t81 = ASN1().decode(resp).find(0x7C).find(0x81)
+        if (not t81):
+            raise ValueError("SM: cannot find tag 81")
+        t82 = ASN1().decode(resp).find(0x7C).find(0x82)
+        if (not t82):
+            raise ValueError("SM: cannot find tag 82")
+        nonce = t81.data()
+        token = t82.data()
+        return pkeyB, nonce, token
+
+    def open_secure_channel(self):
+        pkeyB, nonce, token = self.general_authentication()
+        pbkeyA = self.public_key(0x00, param='secp256r1')
+        shared = pkeyB.exchange(ec.ECDH(), pbkeyA)
+        pbkeyBbytes = PicoHSM.__pubkey_uncompressed(pkeyB)
+        sc = SecureChannel(shared=shared, nonce=nonce)
+        res = sc.verify_token(token, pbkeyBbytes)
+        if (not res):
+            raise ValueError("SM: signature mismatch")
+        self.__sc = sc
