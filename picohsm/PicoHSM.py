@@ -431,7 +431,7 @@ class PicoHSM:
         cert = bytearray(response)
         roid = CVC().decode(cert).pubkey().oid()
         if (roid == oid.ID_TA_ECDSA_SHA_256):
-            curve = EcCurve.to_crypto(EcCurve.from_name(param))
+            curve = EcCurve.from_name(param).to_crypto()
             Y = bytes(CVC().decode(cert).pubkey().find(0x86).data())
             return ec.EllipticCurvePublicKey.from_encoded_point(
                         curve,
@@ -442,11 +442,11 @@ class PicoHSM:
             G = bytes(CVC().decode(cert).pubkey().find(0x83).data())
             P = bytes(CVC().decode(cert).pubkey().find(0x81).data())
             curve = EcCurve.from_P(P)
-            if (isinstance(curve(), Curve25519)):
+            if (isinstance(curve, Curve25519)):
                 if (G[0] != 9):
                     return ed25519.Ed25519PublicKey.from_public_bytes(Y)
                 return x25519.X25519PublicKey.from_public_bytes(Y)
-            elif (isinstance(curve(), Curve448)):
+            elif (isinstance(curve, Curve448)):
                 if (len(G) != 56 or G[0] != 5):
                     return ed448.Ed448PublicKey.from_public_bytes(Y)
                 return x448.X448PublicKey.from_public_bytes(Y)
