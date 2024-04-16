@@ -1055,3 +1055,15 @@ class PicoHSM:
         if (not res):
             raise ValueError("SM: signature mismatch")
         self.__sc = sc
+
+    def phy(self, subcommand, val):
+        if (subcommand == 'vidpid'):
+            p2 = 0x0
+        elif (subcommand == 'led'):
+            p2 = 0x4
+        resp = None
+        if (val):
+            self.send(cla=0x80, command=0x64, p1=0x1B, p2=p2, data=val)
+        else:
+            resp = self.send(cla=0x80, command=0x64, p1=0x1B, p2=p2)
+        return resp
