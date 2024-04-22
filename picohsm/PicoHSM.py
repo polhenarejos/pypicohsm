@@ -27,6 +27,7 @@ from .const import DEFAULT_PIN, DEFAULT_SOPIN, DEFAULT_RETRIES, EF_TERMCA, DEFAU
 from .oid import OID
 import hashlib
 import base58
+from .RescuePicoKey import RescuePicoKey
 
 try:
     from cvc.asn1 import ASN1
@@ -196,14 +197,17 @@ class PicoHSM:
         cardtype = AnyCardType()
         try:
             # request card insertion
-            cardrequest = CardRequest(timeout=10, cardType=cardtype)
-            self.__card = cardrequest.waitforcard()
+            cardrequest = CardRequest(timeout=1, cardType=cardtype)
+            self.__card = cardrequest.waitforcard().connection
 
             # connect to the card and perform a few transmits
-            self.__card.connection.connect()
+            self.__card.connect()
 
         except CardRequestTimeoutException:
-            raise Exception('time-out: no card inserted during last 10s')
+            try:
+                self.__card = RescuePicoKey()
+            except Exception:
+                raise Exception('time-out: no card inserted')
         self.select_applet()
         data = self.get_contents(p1=0x2f02)
         self.device_id = CVC().decode(data).chr() if data else None
@@ -213,7 +217,7 @@ class PicoHSM:
             pass
 
     def select_applet(self):
-        self.__card.connection.transmit([0x00, 0xA4, 0x04, 0x00, 0xB, 0xE8, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x81, 0xC3, 0x1F, 0x02, 0x01, 0x0])
+        self.__card.transmit([0x00, 0xA4, 0x04, 0x00, 0xB, 0xE8, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x81, 0xC3, 0x1F, 0x02, 0x01, 0x0])
 
     def send(self, command, cla=0x00, p1=0x00, p2=0x00, ne=None, data=None, codes=[]):
         lc = []
@@ -237,10 +241,10 @@ class PicoHSM:
             apdu = self.__sc.wrap_apdu(apdu)
 
         try:
-            response, sw1, sw2 = self.__card.connection.transmit(apdu)
+            response, sw1, sw2 = self.__card.transmit(apdu)
         except CardConnectionException:
-            self.__card.connection.reconnect()
-            response, sw1, sw2 = self.__card.connection.transmit(apdu)
+            self.__card.reconnect()
+            response, sw1, sw2 = self.__card.transmit(apdu)
 
         code = (sw1<<8|sw2)
         if (sw1 != 0x90):
@@ -249,20 +253,20 @@ class PicoHSM:
             # elif (code == 0x6A82):
             #     self.select_applet()
             #     if (sw1 == 0x90):
-            #         response, sw1, sw2 = self.__card.connection.transmit(apdu)
+            #         response, sw1, sw2 = self.__card.transmit(apdu)
             #         if (sw1 == 0x90):
             #             return response
             elif (code == 0x6982):
-                response, sw1, sw2 = self.__card.connection.transmit([0x00, 0x20, 0x00, 0x81, len(self.__pin)] + list(self.__pin.encode()) + [0x0])
+                response, sw1, sw2 = self.__card.transmit([0x00, 0x20, 0x00, 0x81, len(self.__pin)] + list(self.__pin.encode()) + [0x0])
                 if (sw1 == 0x90):
-                    response, sw1, sw2 = self.__card.connection.transmit(apdu)
+                    response, sw1, sw2 = self.__card.transmit(apdu)
                     if (sw1 == 0x90):
                         return response
             elif (sw1 == 0x61):
                 response = []
                 while (sw1 == 0x61):
                     apdu = [0x00, 0xC0, 0x00, 0x00, sw2]
-                    resp, sw1, sw2 = self.__card.connection.transmit(apdu)
+                    resp, sw1, sw2 = self.__card.transmit(apdu)
                     response += resp
                 code = (sw1<<8|sw2)
             if (code not in codes and code != 0x9000):

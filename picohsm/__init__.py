@@ -5,3 +5,4 @@ from .Algorithm import Algorithm, Padding, AES
 from .APDU import APDUResponse
 from .oid import OID
 from .SWCodes import SWCodes
+from .RescuePicoKey import RescuePicoKey
