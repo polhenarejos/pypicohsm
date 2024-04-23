@@ -34,7 +34,10 @@ else:
 INSTALL_REQUIRES = [
     'setuptools',
     'cryptography>=3.3',
-    'base58'
+    'base58',
+    'pyusb',
+    'pycvc',
+    'pyscard',
 ]
 
 if sys.platform.startswith('win32'):
