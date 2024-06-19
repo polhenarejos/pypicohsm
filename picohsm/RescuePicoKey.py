@@ -44,7 +44,6 @@ class RescuePicoKey:
                 dev.set_configuration()
                 cfg = dev.get_active_configuration()
                 intf = cfg[(0,0)]
-                print(intf.extra_descriptors)
                 epin,epint = None,None
                 epo = usb.util.find_descriptor(intf, find_all=True, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_OUT)
                 epi = usb.util.find_descriptor(intf, find_all=True, custom_match=lambda e: usb.util.endpoint_direction(e.bEndpointAddress) == usb.util.ENDPOINT_IN)

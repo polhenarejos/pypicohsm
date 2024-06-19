@@ -77,6 +77,9 @@ class Options:
     AUTH_PIN_PKA        = 0x0010    # Enable the combined authentication mode of user pin and public key authentication
     RRC_ONLY_RESET      = 0x0020    # If enabled RESET RETRY COUNTER only resets the error counter
 
+class PHYOpts:
+    PHY_OPT_WCID    = 0x01      # Enable or disable the use of the WCID
+
 class SecureChannel:
     OID_ID_CA_ECDH_AES_CBC_CMAC_128 = b'\x04\x00\x7F\x00\x07\x02\x02\x03\x02\x02'
     BLOCK_SIZE = 16
@@ -1065,6 +1068,22 @@ class PicoHSM:
             p2 = 0x0
         elif (subcommand == 'led'):
             p2 = 0x4
+        elif (subcommand == 'wcid'):
+            p2 = 0x6
+            if (val is not None):
+                resp = self.send(cla=0x80, command=0x64, p1=0x1B, p2=p2)
+                if (resp):
+                    opts = (resp[p2] << 8) | resp[p2+1]
+                else:
+                    opts = 0
+                opt = 0
+                if (subcommand == 'wcid'):
+                    opt = PHYOpts.PHY_OPT_WCID
+                if (val):
+                    opts |= opt
+                else:
+                    opts &= ~opt
+                val = [opts >> 8, opts & 0xFF]
         resp = None
         if (val):
             self.send(cla=0x80, command=0x64, p1=0x1B, p2=p2, data=val)
