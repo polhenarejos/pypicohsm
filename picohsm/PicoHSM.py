@@ -79,6 +79,7 @@ class Options:
 
 class PHYOpts:
     PHY_OPT_WCID    = 0x01      # Enable or disable the use of the WCID
+    PHY_OPT_LED_DIM = 0x10      # Enable or disable the LED dimming
 
 class SecureChannel:
     OID_ID_CA_ECDH_AES_CBC_CMAC_128 = b'\x04\x00\x7F\x00\x07\x02\x02\x03\x02\x02'
@@ -451,6 +452,8 @@ class PicoHSM:
             curve = EcCurve.from_P(P)
             if (isinstance(curve, Curve25519)):
                 if (G[0] != 9):
+                    from binascii import hexlify
+                    print(hexlify(G))
                     return ed25519.Ed25519PublicKey.from_public_bytes(Y)
                 return x25519.X25519PublicKey.from_public_bytes(Y)
             elif (isinstance(curve, Curve448)):
@@ -1066,9 +1069,11 @@ class PicoHSM:
     def phy(self, subcommand, val):
         if (subcommand == 'vidpid'):
             p2 = 0x0
-        elif (subcommand == 'led'):
+        elif (subcommand == 'led_gpio'):
             p2 = 0x4
-        elif (subcommand == 'wcid'):
+        elif (subcommand == 'led_brightness'):
+            p2 = 0x5
+        elif (subcommand == 'wcid' or subcommand == 'led_dimmable'):
             p2 = 0x6
             if (val is not None):
                 resp = self.send(cla=0x80, command=0x64, p1=0x1B, p2=p2)
@@ -1079,6 +1084,8 @@ class PicoHSM:
                 opt = 0
                 if (subcommand == 'wcid'):
                     opt = PHYOpts.PHY_OPT_WCID
+                elif (subcommand == 'led_dimmable'):
+                    opt = PHYOpts.PHY_OPT_LED_DIM
                 if (val):
                     opts |= opt
                 else:
