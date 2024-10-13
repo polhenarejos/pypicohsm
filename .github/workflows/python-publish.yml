@@ -12,6 +12,9 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+  push:
+    tags:
+      - "*" # Push events to matching tags
 
 permissions:
   contents: read
