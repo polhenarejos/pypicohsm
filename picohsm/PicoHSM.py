@@ -1097,3 +1097,14 @@ class PicoHSM:
         else:
             resp = self.send(cla=0x80, command=0x64, p1=0x1B, p2=p2)
         return resp
+
+    def otp(self, row, data=None):
+        p2 = 0x0
+        payload = list(row.to_bytes(2, 'big'))
+        if (data):
+            if (len(data) % 2 != 0):
+                raise ValueError("Data length must be a multiple of 16")
+            self.send(cla=0x80, command=0x64, p1=0x4C, p2=p2, data=payload+list(data))
+        else:
+            resp = self.send(cla=0x80, command=0x64, p1=0x4C, p2=p2, ne=16, data=payload)
+            return resp
