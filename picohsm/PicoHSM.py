@@ -1127,7 +1127,7 @@ class PicoHSM:
             irow += 1
         return ret
 
-    def secure_boot(self, bootkey_hash, bootkey_index=0):
+    def secure_boot(self, bootkey_hash, bootkey_index=0, lock=False):
         # Write bootkey hash
         if (len(bootkey_hash) != 32):
             raise ValueError("Bootkey hash must be 32 bytes")
@@ -1147,3 +1147,30 @@ class PicoHSM:
         resp = self._otp_register(0x40, 3, raw=True, redundant=7)
         secure_boot_enable = resp[0] | 0x01
         self.otp(0x40, [secure_boot_enable, resp[1], resp[2], 0], raw=True, redundant=7)
+
+        if (lock):
+            inp = input("This will lock the chip without possibility to add more bootkeys and will run only with Pico Keys firmware. Type 'LOCK' to continue: ")
+            if (inp != "LOCK"):
+                print('Aborted')
+                return
+
+            # Disable debug, enable glitch detector and set glitch sensitivity
+            debug_disable = (0x01 << 2)
+            glitch_detector = (0x01 << 4)
+            glitch_sens = (0x3 << 5)
+            resp = self._otp_register(0x40, 3, raw=True, redundant=7)
+            flags = resp[0] | debug_disable | glitch_detector | glitch_sens
+            self.otp(0x40, [flags, resp[1], resp[2], 0], raw=True, redundant=7)
+
+            # Invalid all remaining keys
+            resp = self._otp_register(0x4b, 3, raw=True, redundant=2)
+            key_invalid = resp[1] | (0xF & (~(0x01 << bootkey_index)))
+            self.otp(0x4b, [resp[0], key_invalid, resp[2], 0], raw=True, redundant=2)
+
+            # Lock Page 1 & 2
+            resp = self._otp_register(0xf83, 3, raw=True)
+            flags = resp[0] | 0x10
+            self.otp(0xf83, [flags, flags, flags, 0], raw=True)
+            resp = self._otp_register(0xf85, 3, raw=True)
+            flags = resp[0] | 0x10
+            self.otp(0xf85, [flags, flags, flags, 0], raw=True)
