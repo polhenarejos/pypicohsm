@@ -1103,8 +1103,36 @@ class PicoHSM:
         payload = list(row.to_bytes(2, 'big'))
         if (data):
             if (len(data) % 2 != 0):
-                raise ValueError("Data length must be a multiple of 16")
+                raise ValueError("Data length must be a multiple of 2")
             self.send(cla=0x80, command=0x64, p1=0x4C, p2=p2, data=payload+list(data))
         else:
             resp = self.send(cla=0x80, command=0x64, p1=0x4C, p2=p2, ne=16, data=payload)
             return resp
+
+    def secure_boot(self, bootkey_hash, bootkey_index=0):
+        # Write bootkey hash
+        if (len(bootkey_hash) != 32):
+            raise ValueError("Bootkey hash must be 32 bytes")
+        if (bootkey_index not in [0,1,2,3]):
+            raise ValueError("Bootkey index must be between 0 and 3")
+        row_index = [0x80, 0x90, 0xA0, 0xB0]
+        self.otp(row_index[bootkey_index], bootkey_hash)
+        bootkey = list(self.otp(row_index[bootkey_index])) + list(self.otp(row_index[bootkey_index]+8))
+        assert(bootkey == bootkey_hash)
+
+        # Write bootkey valid
+        boot_flag1 = (0x01 << bootkey_index)
+        self.otp(0x4b, [boot_flag1, 0])
+        self.otp(0x4c, [boot_flag1, 0])
+        self.otp(0x4d, [boot_flag1, 0])
+
+        # Enable secure boot
+        secure_boot_enable = 0x1
+        self.otp(0x40, [secure_boot_enable, 0])
+        self.otp(0x41, [secure_boot_enable, 0])
+        self.otp(0x42, [secure_boot_enable, 0])
+        self.otp(0x43, [secure_boot_enable, 0])
+        self.otp(0x44, [secure_boot_enable, 0])
+        self.otp(0x45, [secure_boot_enable, 0])
+        self.otp(0x46, [secure_boot_enable, 0])
+        self.otp(0x47, [secure_boot_enable, 0])
