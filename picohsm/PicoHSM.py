@@ -1098,16 +1098,34 @@ class PicoHSM:
             resp = self.send(cla=0x80, command=0x64, p1=0x1B, p2=p2)
         return resp
 
-    def otp(self, row, data=None):
-        p2 = 0x0
+    def otp(self, row, data=None, raw=False, redundant=0, length=16):
+        p2 = 0x1 if raw else 0x0
         payload = list(row.to_bytes(2, 'big'))
         if (data):
-            if (len(data) % 2 != 0):
-                raise ValueError("Data length must be a multiple of 2")
+            align = (4 if raw else 2)
+            if (len(data) % align != 0):
+                raise ValueError(f"Data length must be a multiple of {align}")
             self.send(cla=0x80, command=0x64, p1=0x4C, p2=p2, data=payload+list(data))
+            for r in range(redundant):
+                self.otp(row+r+1, data, raw=raw, redundant=0)
         else:
-            resp = self.send(cla=0x80, command=0x64, p1=0x4C, p2=p2, ne=16, data=payload)
+            resp = self.send(cla=0x80, command=0x64, p1=0x4C, p2=p2, ne=length, data=payload)
+            for r in range(redundant):
+                retr = self.otp(row+r+1, raw=raw, redundant=0, length=length)
+                if (retr != resp):
+                    raise ValueError("OTP register mismatch")
             return resp
+
+    def _otp_register(self, row, length, raw=False, redundant=0):
+        ret = []
+        irow = row
+        align = (4 if raw else 2)
+        while len(ret) < length:
+            resp = self.otp(irow, raw=raw, redundant=redundant, length=align)
+            bts = min(length-len(ret), len(resp))
+            ret += resp[:bts]
+            irow += 1
+        return ret
 
     def secure_boot(self, bootkey_hash, bootkey_index=0):
         # Write bootkey hash
@@ -1117,22 +1135,15 @@ class PicoHSM:
             raise ValueError("Bootkey index must be between 0 and 3")
         row_index = [0x80, 0x90, 0xA0, 0xB0]
         self.otp(row_index[bootkey_index], bootkey_hash)
-        bootkey = list(self.otp(row_index[bootkey_index])) + list(self.otp(row_index[bootkey_index]+8))
+        bootkey = self._otp_register(row_index[bootkey_index], 32)
         assert(bootkey == bootkey_hash)
 
         # Write bootkey valid
-        boot_flag1 = (0x01 << bootkey_index)
-        self.otp(0x4b, [boot_flag1, 0])
-        self.otp(0x4c, [boot_flag1, 0])
-        self.otp(0x4d, [boot_flag1, 0])
+        resp = self._otp_register(0x4b, 3, raw=True, redundant=2)
+        boot_flag1 = resp[0] | (0x01 << bootkey_index)
+        self.otp(0x4b, [boot_flag1, resp[1], resp[2], 0], raw=True, redundant=2)
 
         # Enable secure boot
-        secure_boot_enable = 0x1
-        self.otp(0x40, [secure_boot_enable, 0])
-        self.otp(0x41, [secure_boot_enable, 0])
-        self.otp(0x42, [secure_boot_enable, 0])
-        self.otp(0x43, [secure_boot_enable, 0])
-        self.otp(0x44, [secure_boot_enable, 0])
-        self.otp(0x45, [secure_boot_enable, 0])
-        self.otp(0x46, [secure_boot_enable, 0])
-        self.otp(0x47, [secure_boot_enable, 0])
+        resp = self._otp_register(0x40, 3, raw=True, redundant=7)
+        secure_boot_enable = resp[0] | 0x01
+        self.otp(0x40, [secure_boot_enable, resp[1], resp[2], 0], raw=True, redundant=7)
