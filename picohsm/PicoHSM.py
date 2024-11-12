@@ -55,6 +55,16 @@ except ModuleNotFoundError:
     print('ERROR: cryptography module not found! Install cryptography package.\nTry with `pip install cryptography`')
     sys.exit(-1)
 
+class Platform:
+    RP2040 = 0
+    RP2350 = 1
+    ESP32  = 2
+
+class Product:
+    HSM     = 1
+    FIDO    = 2
+    OPENPGP = 3
+
 class KeyType:
     RSA                     = 1
     ECC                     = 2
@@ -212,6 +222,14 @@ class PicoHSM:
                 self.__card = RescuePicoKey()
             except Exception:
                 raise Exception('time-out: no card inserted')
+        try:
+            resp, sw1, sw2 = self.select_applet(rescue=True)
+            if (sw1 == 0x90 and sw2 == 0x00):
+                if (resp[1] != Product.HSM):
+                    raise Exception('Not a PicoHSM')
+                self.platform = resp[0]
+        except APDUResponse:
+            self.platform = Platform.RP2040
         self.select_applet()
         data = self.get_contents(p1=0x2f02)
         self.device_id = CVC().decode(data).chr() if data else None
@@ -220,8 +238,10 @@ class PicoHSM:
         except APDUResponse:
             pass
 
-    def select_applet(self):
-        self.__card.transmit([0x00, 0xA4, 0x04, 0x00, 0xB, 0xE8, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x81, 0xC3, 0x1F, 0x02, 0x01, 0x0])
+    def select_applet(self, rescue=False):
+        if (rescue):
+            return self.__card.transmit([0x00, 0xA4, 0x04, 0x04, 0x08, 0xA0, 0x58, 0x3F, 0xC1, 0x9B, 0x7E, 0x4F, 0x21, 0x00])
+        return self.__card.transmit([0x00, 0xA4, 0x04, 0x00, 0xB, 0xE8, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x81, 0xC3, 0x1F, 0x02, 0x01, 0x0])
 
     def send(self, command, cla=0x00, p1=0x00, p2=0x00, ne=None, data=None, codes=[]):
         lc = []
