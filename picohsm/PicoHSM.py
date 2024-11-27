@@ -1194,3 +1194,6 @@ class PicoHSM:
             resp = self._otp_register(0xf85, 3, raw=True)
             flags = resp[0] | 0x10
             self.otp(0xf85, [flags, flags, flags, 0], raw=True)
+
+    def reboot(self):
+        self.send(cla=0x80, command=0x64, p1=0xFB)
