@@ -206,12 +206,18 @@ class SecureChannel:
 class PicoHSM:
     __sc = None
 
-    def __init__(self, pin=None):
+    def __init__(self, pin=None, slot=-1):
         self.__pin = pin or '648219'
         cardtype = AnyCardType()
         try:
             # request card insertion
-            cardrequest = CardRequest(timeout=1, cardType=cardtype)
+            readers = None
+            if (slot >= 0):
+                readers = CardRequest().getReaders()
+                if (slot >= len(readers)):
+                    raise Exception('slot out of range')
+                readers = [readers[slot]]
+            cardrequest = CardRequest(timeout=1, cardType=cardtype, readers=readers)
             self.__card = cardrequest.waitforcard().connection
 
             # connect to the card and perform a few transmits
