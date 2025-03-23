@@ -1197,3 +1197,12 @@ class PicoHSM:
 
     def reboot(self):
         self.send(cla=0x80, command=0x64, p1=0xFB)
+
+    def memory(self):
+        resp = self.send(cla=0x80, command=0x64, p1=0x5)
+        free = int.from_bytes(resp[:4], 'big')
+        used = int.from_bytes(resp[4:8], 'big')
+        total = int.from_bytes(resp[8:12], 'big')
+        nfiles = int.from_bytes(resp[12:16], 'big')
+        size = int.from_bytes(resp[16:20], 'big')
+        return {'free': free, 'used': used, 'total': total, 'files': nfiles, 'size': size}
