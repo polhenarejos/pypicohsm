@@ -59,6 +59,7 @@ class Platform:
     RP2040 = 0
     RP2350 = 1
     ESP32  = 2
+    EMULATION = 3
 
 class Product:
     HSM     = 1
