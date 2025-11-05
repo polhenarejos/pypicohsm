@@ -37,7 +37,7 @@ INSTALL_REQUIRES = [
     'base58',
     'pyusb',
     'pycvc',
-    'pyscard',
+    'pyscard<=2.2.2',
 ]
 
 if sys.platform.startswith('win32'):
