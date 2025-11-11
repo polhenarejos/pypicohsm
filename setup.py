@@ -54,7 +54,7 @@ setup(
     packages=['picohsm','picohsm/tools'],
     version=version,
     description='Pico HSM for Python',
-    license='GPLv3',
+    license='AGPL',
     license_files='LICENSE',
     author="Pol Henarejos",
     author_email='pol.henarejos@cttc.es',

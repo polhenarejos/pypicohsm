@@ -4,30 +4,37 @@
  * Copyright (c) 2022 Pol Henarejos.
  *
  * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Affero General Public License as published by
  * the Free Software Foundation, version 3.
  *
  * This program is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
- * General Public License for more details.
+ * Affero General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with this program. If not, see <http://www.gnu.org/licenses/>.
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 """
 
 import sys
 import os
-from .APDU import APDUResponse
 from .DO import DOPrefixes
 from .Algorithm import Algorithm, Padding, AES
-from .utils import int_to_bytes
+from .utils import int_to_bytes, get_pki_data
 from .const import DEFAULT_PIN, DEFAULT_SOPIN, DEFAULT_RETRIES, EF_TERMCA, DEFAULT_DKEK_SHARES
 from .oid import OID
 import hashlib
 import base58
-from .RescuePicoKey import RescuePicoKey
+from binascii import hexlify
+import base64
+import urllib
+
+try:
+    from picokey import PicoKey, SecureChannel, APDUResponse, Product, Platform
+except ModuleNotFoundError:
+    print('ERROR: pypicokey module not found! Install pypicokey package.\nTry with `pip install pypicokey`')
+    sys.exit(-1)
 
 try:
     from cvc.asn1 import ASN1
@@ -55,17 +62,6 @@ except ModuleNotFoundError:
     print('ERROR: cryptography module not found! Install cryptography package.\nTry with `pip install cryptography`')
     sys.exit(-1)
 
-class Platform:
-    RP2040 = 0
-    RP2350 = 1
-    ESP32  = 2
-    EMULATION = 3
-
-class Product:
-    HSM     = 1
-    FIDO    = 2
-    OPENPGP = 3
-
 class KeyType:
     RSA                     = 1
     ECC                     = 2
@@ -88,155 +84,13 @@ class Options:
     AUTH_PIN_PKA        = 0x0010    # Enable the combined authentication mode of user pin and public key authentication
     RRC_ONLY_RESET      = 0x0020    # If enabled RESET RETRY COUNTER only resets the error counter
 
-class PHYOpts:
-    PHY_OPT_WCID    = 0x01      # Enable or disable the use of the WCID
-    PHY_OPT_LED_DIM = 0x10      # Enable or disable the LED dimming
-
-class SecureChannel:
-    OID_ID_CA_ECDH_AES_CBC_CMAC_128 = b'\x04\x00\x7F\x00\x07\x02\x02\x03\x02\x02'
-    BLOCK_SIZE = 16
-
-    PROTO_OID = OID_ID_CA_ECDH_AES_CBC_CMAC_128
-
-    def __init__(self, shared=None, nonce=None):
-        self.__derive_sm_keys(shared=shared, nonce=nonce)
-
-    def __derive_sm_key(input=None, counter=0, nonce=None):
-        b = b''
-        if (input):
-            b += input
-        if (nonce):
-            b += nonce
-        b += counter.to_bytes(4, 'big')
-        digest = hashlib.sha1(b).digest()
-        return digest[:16]
-
-    def __derive_sm_keys(self, shared, nonce):
-        self.__sm_kenc = SecureChannel.__derive_sm_key(shared, 1, nonce)
-        self.__sm_kmac = SecureChannel.__derive_sm_key(shared, 2, nonce)
-        self.__sm_counter = 0
-
-    def __sm_sign(self, data):
-        c = cmac.CMAC(algorithms.AES(self.__sm_kmac))
-        c.update(data)
-        return c.finalize()
-
-    def __sm_inc_counter(self):
-        self.__sm_counter += 1
-
-    def __sm_iv(self):
-        iv = b'\x00'*16
-        cipher = Cipher(algorithms.AES(self.__sm_kenc), modes.CBC(iv))
-        encryptor = cipher.encryptor()
-        message = self.__sm_counter.to_bytes(self.BLOCK_SIZE, 'big')
-        ct = encryptor.update(message) + encryptor.finalize()
-        return ct
-
-    def verify_token(self, token, pbkey):
-        a = ASN1().add_tag(0x7F49, ASN1().add_oid(self.PROTO_OID).add_tag(0x86, pbkey).encode())
-        signature = self.__sm_sign(a.encode())
-        return signature[:len(token)] == token
-
-    def wrap_apdu(self, apdu):
-        cla, ins, p1, p2, lc, data, le = apdu[0], apdu[1], apdu[2], apdu[3], apdu[4:7], apdu[7:-2], apdu[-2:]
-        cla |= 0x0C
-
-        data += [0x80]
-        data += [0x00] * (self.BLOCK_SIZE - (len(data) % self.BLOCK_SIZE))
-
-        self.__sm_inc_counter()
-        iv = self.__sm_iv()
-        cipher = Cipher(algorithms.AES(self.__sm_kenc), modes.CBC(iv))
-        encryptor = cipher.encryptor()
-        ct = encryptor.update(bytes(data)) + encryptor.finalize()
-        if (ins & 0x1 == 0):
-            tlv_body = [0x01] + list(ct)
-            body = ASN1().add_tag(0x87, tlv_body).encode()
-        else:
-            body = ASN1().add_tag(0x85, list(ct)).encode()
-        do_le = [0x97, 0x02] + le
-
-        macb = list(self.__sm_counter.to_bytes(self.BLOCK_SIZE, 'big')) + [cla, ins, p1, p2, 0x80] + [0x00] * (self.BLOCK_SIZE - 5) + list(body) + do_le + [0x80]
-        macb += [0x00] * (self.BLOCK_SIZE - (len(macb) % self.BLOCK_SIZE))
-        macc = self.__sm_sign(bytes(macb))
-        do_mac = ASN1().add_tag(0x8E, list(macc)).encode()
-
-        new_lc = list((len(body) + len(do_le) + len(do_mac)).to_bytes(3, 'big'))
-
-        apdu = [cla, ins, p1, p2] + new_lc + list(body) + do_le + list(do_mac) + [0x00, 0x00]
-        return apdu
-
-    def unwrap_rapdu(self, apdu):
-        self.__sm_inc_counter()
-        signature = ASN1().decode(apdu).find(0x8E).data()
-        body = ASN1().decode(apdu).find(0x87)
-        sw = ASN1().decode(apdu).find(0x99)
-        if (not sw):
-            raise ValueError("SM: no sw found")
-        sw = sw.data()
-        do_sw = ASN1.make_tag(0x99, sw)
-        macb = bytearray(self.__sm_counter.to_bytes(self.BLOCK_SIZE, 'big'))
-        if (body):
-            body = body.data()
-            if (body and body[0] != 0x1):
-                raise ValueError("SM: data not consistent")
-            do_body = ASN1.make_tag(0x87, body)
-            macb += do_body
-        macb += do_sw
-        macb += bytearray([0x80])
-        macb += bytearray([0x00] * (self.BLOCK_SIZE - (len(macb) % self.BLOCK_SIZE)))
-        sign = self.__sm_sign(bytes(macb))[:len(signature)]
-        if (signature != sign):
-            raise ValueError("SM: signature mismatch")
-        rapdu = []
-        if (body):
-            body = body[1:]
-            iv = self.__sm_iv()
-            cipher = Cipher(algorithms.AES(self.__sm_kenc), modes.CBC(iv))
-            decryptor = cipher.decryptor()
-            ct = decryptor.update(bytes(body)) + decryptor.finalize()
-            l = len(ct) - 1
-            while (l >= 0 and ct[l] == 0x00):
-                l -= 1
-            if (l < 0 or ct[l] != 0x80):
-                raise ValueError("SM: body malformed")
-            rapdu = list(ct[:l])
-        return rapdu, sw[0] << 8 | sw[1]
-
 
 class PicoHSM:
-    __sc = None
-
     def __init__(self, pin=None, slot=-1):
         self.__pin = pin or '648219'
-        cardtype = AnyCardType()
-        try:
-            # request card insertion
-            readers = None
-            if (slot >= 0):
-                readers = CardRequest().getReaders()
-                if (slot >= len(readers)):
-                    raise Exception('slot out of range')
-                readers = [readers[slot]]
-            cardrequest = CardRequest(timeout=1, cardType=cardtype, readers=readers)
-            self.__card = cardrequest.waitforcard().connection
-
-            # connect to the card and perform a few transmits
-            self.__card.connect()
-
-        except CardRequestTimeoutException:
-            try:
-                self.__card = RescuePicoKey()
-            except Exception:
-                raise Exception('time-out: no card inserted')
-        try:
-            resp, sw1, sw2 = self.select_applet(rescue=True)
-            if (sw1 == 0x90 and sw2 == 0x00):
-                if (resp[1] != Product.HSM):
-                    raise Exception('Not a PicoHSM')
-                self.platform = resp[0]
-        except APDUResponse:
-            self.platform = Platform.RP2040
+        self.__card = PicoKey(slot=slot)
+        if (self.__card.product != Product.HSM):
+            raise Exception('Not a PicoHSM')
         self.select_applet()
         data = self.get_contents(p1=0x2f02)
         self.device_id = CVC().decode(data).chr() if data else None
@@ -246,66 +100,18 @@ class PicoHSM:
             pass
 
     def select_applet(self, rescue=False):
-        if (rescue):
-            return self.__card.transmit([0x00, 0xA4, 0x04, 0x04, 0x08, 0xA0, 0x58, 0x3F, 0xC1, 0x9B, 0x7E, 0x4F, 0x21, 0x00])
-        return self.__card.transmit([0x00, 0xA4, 0x04, 0x00, 0xB, 0xE8, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x81, 0xC3, 0x1F, 0x02, 0x01, 0x0])
+        return self.__card.select_applet(rescue=rescue)
 
     def send(self, command, cla=0x00, p1=0x00, p2=0x00, ne=None, data=None, codes=[]):
-        lc = []
-        dataf = []
-        if (data):
-            lc = [0x00] + list(len(data).to_bytes(2, 'big'))
-            dataf = list(data)
-        else:
-            lc = [0x00*3]
-        if (ne is None):
-            le = [0x00, 0x00]
-        else:
-            le = list(ne.to_bytes(2, 'big'))
-        if (isinstance(command, list) and len(command) > 1):
-            apdu = command
-        else:
-            apdu = [cla, command]
-
-        apdu = apdu + [p1, p2] + lc + dataf + le
-        if (self.__sc):
-            apdu = self.__sc.wrap_apdu(apdu)
-
         try:
-            response, sw1, sw2 = self.__card.transmit(apdu)
-        except CardConnectionException:
-            self.__card.reconnect()
-            response, sw1, sw2 = self.__card.transmit(apdu)
-
-        code = (sw1<<8|sw2)
-        if (sw1 != 0x90):
-            if (sw1 == 0x63 and sw2 & 0xF0 == 0xC0):
-                pass
-            # elif (code == 0x6A82):
-            #     self.select_applet()
-            #     if (sw1 == 0x90):
-            #         response, sw1, sw2 = self.__card.transmit(apdu)
-            #         if (sw1 == 0x90):
-            #             return response
-            elif (code == 0x6982):
+            response, code = self.__card.send(command=command, cla=cla, p1=p1, p2=p2, ne=ne, data=data, codes=codes)
+        except APDUResponse as e:
+            if (e.sw == 0x6982):
                 response, sw1, sw2 = self.__card.transmit([0x00, 0x20, 0x00, 0x81, len(self.__pin)] + list(self.__pin.encode()) + [0x0])
                 if (sw1 == 0x90):
-                    response, sw1, sw2 = self.__card.transmit(apdu)
+                    response, sw1, sw2 = self.__card.resend()
                     if (sw1 == 0x90):
                         return response
-            elif (sw1 == 0x61):
-                response = []
-                while (sw1 == 0x61):
-                    apdu = [0x00, 0xC0, 0x00, 0x00, sw2]
-                    resp, sw1, sw2 = self.__card.transmit(apdu)
-                    response += resp
-                code = (sw1<<8|sw2)
-            if (code not in codes and code != 0x9000):
-                raise APDUResponse(sw1, sw2)
-        if (self.__sc):
-            response, code = self.__sc.unwrap_rapdu(response)
-            if (code not in codes and code != 0x9000):
-                raise APDUResponse(code >> 8, code & 0xff)
         if (len(codes) > 1):
             return bytes(response), code
         return bytes(response)
@@ -330,7 +136,7 @@ class PicoHSM:
     def logout(self):
         self.select_applet()
 
-    def initialize(self, pin=DEFAULT_PIN, sopin=DEFAULT_SOPIN, options=Options.RESET_RETRY_COUNTER, retries=DEFAULT_RETRIES, dkek_shares=None, puk_auts=None, puk_min_auts=None, key_domains=None):
+    def initialize(self, pin=DEFAULT_PIN, sopin=DEFAULT_SOPIN, options=Options.RESET_RETRY_COUNTER, retries=DEFAULT_RETRIES, dkek_shares=None, puk_auts=None, puk_min_auts=None, key_domains=None, no_dev_cert=False):
         if (retries is not None and not 0 < retries <= 10):
             raise ValueError('Retries must be in the range (0,10]')
         if (dkek_shares is not None and not 0 <= dkek_shares <= 10):
@@ -345,6 +151,16 @@ class PicoHSM:
             raise ValueError('PUK Min Auts must be less or equal to PUK Auts')
         if (key_domains is not None and not 0 < key_domains <= 8):
             raise ValueError('Key Domains must be in the range (0,8]')
+
+        try:
+            self.login(pin)
+        except APDUResponse:
+            pass
+
+        try:
+            self.login(sopin, who=PinType.SO_PIN)
+        except APDUResponse:
+            pass
 
         a = ASN1()
         if (options is not None):
@@ -365,6 +181,27 @@ class PicoHSM:
         data = a.encode()
 
         self.send(cla=0x80, command=0x50, data=data)
+
+        if (not no_dev_cert):
+            response = self.get_contents(DOPrefixes.EE_CERTIFICATE_PREFIX, 0x00)
+
+            cert = bytearray(response)
+            Y = CVC().decode(cert).pubkey().find(0x86).data()
+            print(f'Public Point: {hexlify(Y).decode()}')
+
+            pbk = base64.urlsafe_b64encode(Y)
+            params = {'pubkey': pbk}
+            if (self.__card.platform in (Platform.RP2350, Platform.ESP32, Platform.EMULATION)):
+                params['curve'] = 'secp256k1'
+            data = urllib.parse.urlencode(params).encode()
+            j = get_pki_data('cvc', data=data)
+            print('Device name: '+j['devname'])
+            dataef = base64.urlsafe_b64decode(
+                j['cvcert']) + base64.urlsafe_b64decode(j['dvcert']) + base64.urlsafe_b64decode(j['cacert'])
+
+            self.select_file(0x2f02)
+            response = self.put_contents(0x0000, data=dataef)
+
 
     def login(self, pin=None, who=PinType.USER_PIN):
         if (pin is None):
@@ -1066,8 +903,8 @@ class PicoHSM:
         self.send(command=0x22, p1=0x41, p2=0xA4, data=ASN1().add_tag(0x80, SecureChannel.PROTO_OID).encode())
         pkeyB = ec.generate_private_key(ec.SECP256R1())
         pbkeyB = pkeyB.public_key()
-        pbkeyBbytes = PicoHSM.__pubkey_uncompressed(pbkeyB)
-        dado = ASN1().add_tag(0x7C, ASN1().add_tag(0x80, pbkeyBbytes).encode()).encode()
+        pbkeyBytes = PicoHSM.__pubkey_uncompressed(pbkeyB)
+        dado = ASN1().add_tag(0x7C, ASN1().add_tag(0x80, pbkeyBytes).encode()).encode()
         resp = self.send(command=0x86, data=dado)
         a = ASN1().decode(resp).find(0x7C)
         if (not a):
@@ -1086,12 +923,9 @@ class PicoHSM:
         pkeyB, nonce, token = self.general_authentication()
         pbkeyA = self.public_key(0x00, param='secp256r1')
         shared = pkeyB.exchange(ec.ECDH(), pbkeyA)
-        pbkeyBbytes = PicoHSM.__pubkey_uncompressed(pkeyB)
-        sc = SecureChannel(shared=shared, nonce=nonce)
-        res = sc.verify_token(token, pbkeyBbytes)
-        if (not res):
-            raise ValueError("SM: signature mismatch")
-        self.__sc = sc
+        pbkeyBytes = PicoHSM.__pubkey_uncompressed(pkeyB)
+
+        self.__card.open_secure_channel(shared=shared, nonce=nonce, token=token, pbkeyBbytes=pbkeyBytes)
 
     def phy(self, subcommand, val):
         if (subcommand == 'vidpid'):
