@@ -38,6 +38,7 @@ INSTALL_REQUIRES = [
     'pyusb',
     'pycvc',
     'pyscard<=2.2.2',
+    'pypicokey',
 ]
 
 if sys.platform.startswith('win32'):
