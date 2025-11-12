@@ -31,7 +31,7 @@ import base64
 import urllib
 
 try:
-    from picokey import PicoKey, SecureChannel, APDUResponse, Product, Platform
+    from picokey import PicoKey, SecureChannel, APDUResponse, Product, Platform, PhyOpt
 except ModuleNotFoundError:
     print('ERROR: pypicokey module not found! Install pypicokey package.\nTry with `pip install pypicokey`')
     sys.exit(-1)
@@ -944,9 +944,9 @@ class PicoHSM:
                     opts = 0
                 opt = 0
                 if (subcommand == 'wcid'):
-                    opt = PHYOpts.PHY_OPT_WCID
+                    opt = PhyOpt.WCID
                 elif (subcommand == 'led_dimmable'):
-                    opt = PHYOpts.PHY_OPT_LED_DIM
+                    opt = PhyOpt.DIMM
                 if (val):
                     opts |= opt
                 else:
