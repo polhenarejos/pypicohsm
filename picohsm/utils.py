@@ -17,7 +17,7 @@
  */
 """
 
-import urllib
+import urllib.request
 import json
 
 def int_to_bytes(x, length=None, byteorder='big'):

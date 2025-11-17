@@ -124,6 +124,7 @@ class PicoHSM:
             if (e.sw1 == 0x63 and e.sw2 & 0xF0 == 0xC0):
                 return e.sw2 & 0x0F
             raise e
+        return -1 # No PIN required
 
     def is_logged(self):
         try:
@@ -151,6 +152,10 @@ class PicoHSM:
             raise ValueError('PUK Min Auts must be less or equal to PUK Auts')
         if (key_domains is not None and not 0 < key_domains <= 8):
             raise ValueError('Key Domains must be in the range (0,8]')
+        if (pin is None):
+            pin = DEFAULT_PIN
+        if (sopin is None):
+            sopin = DEFAULT_SOPIN
 
         try:
             self.login(pin)
@@ -187,7 +192,7 @@ class PicoHSM:
 
             cert = bytearray(response)
             Y = CVC().decode(cert).pubkey().find(0x86).data()
-            print(f'Public Point: {hexlify(Y).decode()}')
+            #print(f'Public Point: {hexlify(Y).decode()}')
 
             pbk = base64.urlsafe_b64encode(Y)
             params = {'pubkey': pbk}
@@ -195,7 +200,7 @@ class PicoHSM:
                 params['curve'] = 'secp256k1'
             data = urllib.parse.urlencode(params).encode()
             j = get_pki_data('cvc', data=data)
-            print('Device name: '+j['devname'])
+            #print('Device name: '+j['devname'])
             dataef = base64.urlsafe_b64decode(
                 j['cvcert']) + base64.urlsafe_b64decode(j['dvcert']) + base64.urlsafe_b64decode(j['cacert'])
 
@@ -317,7 +322,6 @@ class PicoHSM:
             if (isinstance(curve, Curve25519)):
                 if (G[0] != 9):
                     from binascii import hexlify
-                    print(hexlify(G))
                     return ed25519.Ed25519PublicKey.from_public_bytes(Y)
                 return x25519.X25519PublicKey.from_public_bytes(Y)
             elif (isinstance(curve, Curve448)):
