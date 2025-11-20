@@ -46,14 +46,6 @@ except ModuleNotFoundError:
     sys.exit(-1)
 
 try:
-    from smartcard.CardType import AnyCardType
-    from smartcard.CardRequest import CardRequest
-    from smartcard.Exceptions import CardRequestTimeoutException, CardConnectionException
-except ModuleNotFoundError:
-    print('ERROR: smarctard module not found! Install pyscard package.\nTry with `pip install pyscard`')
-    sys.exit(-1)
-
-try:
     from cryptography.hazmat.primitives.asymmetric import ec, rsa, utils, padding, x25519, x448, ed25519, ed448
     from cryptography.hazmat.primitives import hashes, cmac
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -86,9 +78,9 @@ class Options:
 
 
 class PicoHSM:
-    def __init__(self, pin=None, slot=-1):
+    def __init__(self, pin=None, slot=-1, force_rescue=False):
         self.__pin = pin or '648219'
-        self.__card = PicoKey(slot=slot)
+        self.__card = PicoKey(slot=slot, force_rescue=force_rescue)
         if (self.__card.product != Product.HSM):
             raise Exception('Not a PicoHSM')
         self.select_applet()
