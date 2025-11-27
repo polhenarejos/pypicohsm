@@ -92,7 +92,9 @@ class PicoHSM:
             pass
 
     def select_applet(self, rescue=False):
-        return self.__card.select_applet(rescue=rescue)
+        if (rescue):
+            return self.__card.select_applet()
+        return self.__card.transmit([0x00, 0xA4, 0x04, 0x00, 0x0B, 0xE8, 0x2B, 0x06, 0x01, 0x04, 0x01, 0x81, 0xC3, 0x1F, 0x02, 0x01, 0x00])
 
     def send(self, command, cla=0x00, p1=0x00, p2=0x00, ne=None, data=None, codes=[]):
         try:
@@ -104,6 +106,7 @@ class PicoHSM:
                     response, sw1, sw2 = self.__card.resend()
                     if (sw1 == 0x90):
                         return response
+            raise e
         if (len(codes) > 1):
             return bytes(response), code
         return bytes(response)
